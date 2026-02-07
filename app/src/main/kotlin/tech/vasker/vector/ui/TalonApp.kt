@@ -245,7 +245,8 @@ fun TalonApp() {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
-                trips = tripSummaries
+                trips = tripSummaries,
+                onExportTrip = { tripId -> tripHolder.exportTrip(context, tripId) },
             )
         }
     }

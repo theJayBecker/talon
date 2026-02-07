@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import tech.vasker.vector.obd.ConnectionState
 import tech.vasker.vector.obd.LivePidValues
@@ -30,8 +31,9 @@ class TripStateHolder(
     private val context: Context,
     private val liveValues: StateFlow<LivePidValues>,
     private val connectionState: StateFlow<ConnectionState>,
+    private val repository: TripRepository,
+    private val storage: TripStorage,
 ) {
-    private val storage = TripStorage(context)
     private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
     private val _tripState = MutableStateFlow(TripRecordingState())
@@ -70,7 +72,11 @@ class TripStateHolder(
     init {
         scope.launch(Dispatchers.IO) {
             storage.finalizeOpenTrips(System.currentTimeMillis())
-            _tripSummaries.value = storage.listTrips()
+        }
+        scope.launch {
+            repository.tripsFlow().catch { e -> Log.e(TAG, "tripsFlow error", e) }.collect {
+                _tripSummaries.value = it
+            }
         }
         scope.launch {
             liveValues.collect { values ->
@@ -116,6 +122,16 @@ class TripStateHolder(
         }
     }
 
+    fun exportTrip(context: Context, tripId: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                repository.exportToTempAndShare(context, tripId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Export failed for $tripId", e)
+            }
+        }
+    }
+
     private fun startLocationUpdates() {
         try {
             locationManager.requestLocationUpdates(
@@ -150,7 +166,7 @@ class TripStateHolder(
                     if (lossStartMs == null) lossStartMs = now
                     if (lossStartMs != null && now - lossStartMs!! >= SIGNAL_LOSS_MS) {
                         stopTripInternal(endReason = "signal_loss", forcedStatus = TripStatus.PARTIAL)
-                        break
+                        return@launch
                     }
                 } else {
                     lossStartMs = null
@@ -212,7 +228,7 @@ class TripStateHolder(
         return flags.joinToString("|")
     }
 
-    private fun stopTripInternal(endReason: String?, forcedStatus: TripStatus?) {
+    private suspend fun stopTripInternal(endReason: String?, forcedStatus: TripStatus?) {
         val current = session ?: return
         _tripState.value = _tripState.value.copy(state = TripState.ENDING)
         samplingJob?.cancel()
@@ -233,7 +249,7 @@ class TripStateHolder(
         )
         val stats = current.buildStats(endTime)
         storage.finalizeTrip(current.tripId, metadata, stats, includeSamples = false)
-        _tripSummaries.value = storage.listTrips()
+        repository.insertTrip(metadata, stats, "trips/${current.tripId}/samples.csv")
         session = null
         RecordingService.stop(context)
         _tripState.value = _tripState.value.copy(

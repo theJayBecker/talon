@@ -90,7 +90,7 @@ class TripStorage(
         return root.listFiles { f -> f.isDirectory }?.mapNotNull { dir ->
             val tripJson = File(dir, "trip.json")
             if (!tripJson.exists()) return@mapNotNull null
-            val parsed = parseTripJson(tripJson) ?: return@mapNotNull null
+            val parsed = TripJsonParser.parse(tripJson) ?: return@mapNotNull null
             TripSummary(
                 id = parsed.first.id,
                 startTime = parsed.first.startTime,
@@ -109,7 +109,7 @@ class TripStorage(
         root.listFiles { f -> f.isDirectory }?.forEach { dir ->
             val tripJson = File(dir, "trip.json")
             if (!tripJson.exists()) return@forEach
-            val parsed = parseTripJson(tripJson) ?: return@forEach
+            val parsed = TripJsonParser.parse(tripJson) ?: return@forEach
             val metadata = parsed.first
             if (metadata.endTime != null) return@forEach
             val stats = computeStatsFromCsv(File(dir, "samples.csv"), metadata.startTime, endTime, metadata)
@@ -167,38 +167,13 @@ class TripStorage(
         file.writeText(obj.toString(2), Charsets.UTF_8)
     }
 
-    private fun parseTripJson(file: File): Pair<TripMetadata, TripStats>? {
-        return try {
-            val obj = JSONObject(file.readText(Charsets.UTF_8))
-            val metaObj = obj.getJSONObject("metadata")
-            val statsObj = obj.getJSONObject("stats")
-            val metadata = TripMetadata(
-                id = metaObj.getString("id"),
-                startTime = metaObj.getLong("startTime"),
-                endTime = if (metaObj.has("endTime")) metaObj.getLong("endTime") else null,
-                status = TripStatus.valueOf(metaObj.getString("status").uppercase()),
-                recordingMode = RecordingMode.valueOf(metaObj.getString("recordingMode").uppercase()),
-                endReason = if (metaObj.has("endReason")) metaObj.getString("endReason") else null,
-            )
-            val stats = TripStats(
-                durationSec = statsObj.getInt("durationSec"),
-                distanceMi = statsObj.getDouble("distanceMi"),
-                fuelStartPct = statsObj.optDouble("fuelStartPct").takeIf { !statsObj.isNull("fuelStartPct") },
-                fuelEndPct = statsObj.optDouble("fuelEndPct").takeIf { !statsObj.isNull("fuelEndPct") },
-                fuelUsedPct = statsObj.optDouble("fuelUsedPct").takeIf { !statsObj.isNull("fuelUsedPct") },
-                avgSpeedMph = statsObj.getDouble("avgSpeedMph"),
-                maxSpeedMph = statsObj.getDouble("maxSpeedMph"),
-                avgRpm = statsObj.getDouble("avgRpm"),
-                maxRpm = statsObj.getDouble("maxRpm"),
-                avgCoolantF = statsObj.getDouble("avgCoolantF"),
-                maxCoolantF = statsObj.getDouble("maxCoolantF"),
-                maxLoadPct = statsObj.getDouble("maxLoadPct"),
-                idleTimeSec = statsObj.getInt("idleTimeSec"),
-            )
-            metadata to stats
-        } catch (_: Exception) {
-            null
-        }
+    /**
+     * Reads trip metadata and stats for a trip id from its trip.json. Returns null if not found or unreadable.
+     */
+    fun readTripMetadataAndStats(tripId: String): Pair<TripMetadata, TripStats>? {
+        val tripDir = File(tripsRoot, tripId)
+        val tripJson = File(tripDir, "trip.json")
+        return TripJsonParser.parse(tripJson)
     }
 
     private fun computeStatsFromCsv(

@@ -47,6 +47,13 @@ data class TripSummary(
     val fuelUsedPct: Double?,
 )
 
+/** Full trip data for export: metadata, stats, and path to samples file. */
+data class TripDetail(
+    val metadata: TripMetadata,
+    val stats: TripStats,
+    val samplesPath: String?,
+)
+
 data class TripRecordingState(
     val state: TripState = TripState.IDLE,
     val tripId: String? = null,

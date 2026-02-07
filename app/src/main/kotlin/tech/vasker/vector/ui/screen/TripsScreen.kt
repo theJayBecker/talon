@@ -8,7 +8,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +29,7 @@ import java.util.Locale
 fun TripsScreen(
     modifier: Modifier = Modifier,
     trips: List<TripSummary>,
+    onExportTrip: (tripId: String) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Column(
@@ -67,7 +73,7 @@ fun TripsScreen(
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
                 trips.forEach { trip ->
-                    TripRow(trip = trip, onClick = {})
+                    TripRow(trip = trip, onClick = {}, onExport = { onExportTrip(trip.id) })
                 }
             }
         }
@@ -78,6 +84,7 @@ fun TripsScreen(
 private fun TripRow(
     trip: TripSummary,
     onClick: () -> Unit,
+    onExport: () -> Unit,
 ) {
     val dateStr = formatDate(trip.startTime)
     val timeStr = formatTime(trip.startTime)
@@ -127,11 +134,23 @@ private fun TripRow(
                 )
             }
         }
-        Text(
-            text = "›",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onExport,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Share,
+                    contentDescription = "Share trip",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "›",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 16.dp),
