@@ -2,6 +2,7 @@ package tech.vasker.vector.ui.screen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,11 @@ import androidx.compose.ui.unit.dp
 import tech.vasker.vector.obd.ConnectionState
 import tech.vasker.vector.obd.LivePidValues
 import tech.vasker.vector.ui.components.CircularFuelGauge
+import androidx.compose.ui.res.painterResource
+import tech.vasker.vector.R
+import tech.vasker.vector.trip.TripRecordingState
+import tech.vasker.vector.trip.TripState
+import java.util.Locale
 
 @Composable
 fun DashboardScreen(
@@ -41,13 +47,17 @@ fun DashboardScreen(
     liveValues: LivePidValues,
     isStale: Boolean,
     errorMessage: String?,
+    tripState: TripRecordingState,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
+    onStartTrip: () -> Unit,
+    onStopTrip: () -> Unit,
 ) {
     val connected = connectionState is ConnectionState.Connected
     val staleLabel = if (isStale) " (Stale)" else ""
+    val recording = tripState.state == TripState.ACTIVE
 
-    if (!connected) {
+    if (!connected && !recording) {
         ConnectView(
             modifier = modifier,
             connectionState = connectionState,
@@ -77,12 +87,78 @@ fun DashboardScreen(
                 liveValues = liveValues,
                 staleLabel = staleLabel,
             )
+            TripCard(
+                tripState = tripState,
+                onStartTrip = onStartTrip,
+                onStopTrip = onStopTrip,
+            )
             StatusStrip(
                 connectionState = connectionState,
                 isStale = isStale,
             )
         }
     }
+}
+
+@Composable
+private fun TripCard(
+    tripState: TripRecordingState,
+    onStartTrip: () -> Unit,
+    onStopTrip: () -> Unit,
+) {
+    val recording = tripState.state == TripState.ACTIVE
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "TRIP",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (recording) "Recording" else "Not recording",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (recording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TripStat(label = "Duration", value = formatDuration(tripState.durationSec))
+                TripStat(label = "Distance", value = String.format(Locale.US, "%.1f mi", tripState.distanceMi))
+                TripStat(
+                    label = "Fuel Used",
+                    value = tripState.fuelUsedPct?.let { String.format(Locale.US, "%.1f%%", it) } ?: "—",
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            if (recording) {
+                OutlinedButton(onClick = onStopTrip, modifier = Modifier.fillMaxWidth()) { Text("Stop Trip") }
+            } else {
+                Button(onClick = onStartTrip, modifier = Modifier.fillMaxWidth()) { Text("Start Trip") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TripStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+private fun formatDuration(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
 }
 
 @Composable
@@ -110,6 +186,12 @@ private fun ConnectView(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.talonlogo),
+            contentDescription = "Talon logo",
+            modifier = Modifier.size(64.dp),
+        )
+        Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "TALON",
             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.SemiBold),
@@ -238,11 +320,19 @@ private fun HeaderRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.talonlogo),
+                    contentDescription = "Talon logo",
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
             OutlinedButton(onClick = onDisconnectClick) { Text("Disconnect") }
         }
         HorizontalDivider(

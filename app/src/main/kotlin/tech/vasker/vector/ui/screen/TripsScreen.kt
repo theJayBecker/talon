@@ -15,7 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import tech.vasker.vector.data.mock.TripSummaryMock
+import tech.vasker.vector.trip.TripSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -23,7 +23,7 @@ import java.util.Locale
 @Composable
 fun TripsScreen(
     modifier: Modifier = Modifier,
-    trips: List<TripSummaryMock>,
+    trips: List<TripSummary>,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Column(
@@ -76,7 +76,7 @@ fun TripsScreen(
 
 @Composable
 private fun TripRow(
-    trip: TripSummaryMock,
+    trip: TripSummary,
     onClick: () -> Unit,
 ) {
     val dateStr = formatDate(trip.startTime)
@@ -121,7 +121,7 @@ private fun TripRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "-${String.format(Locale.getDefault(), "%.1f", trip.fuelUsedPct)}%",
+                    text = trip.fuelUsedPct?.let { "-${String.format(Locale.getDefault(), "%.1f", it)}%" } ?: "—",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

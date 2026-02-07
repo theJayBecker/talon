@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.collectAsState
-import tech.vasker.vector.data.mock.MockData
 import tech.vasker.vector.obd.ConnectionState
 import tech.vasker.vector.obd.ObdStateHolder
 import tech.vasker.vector.ui.screen.DashboardScreen
@@ -51,6 +50,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import androidx.compose.foundation.background
 import androidx.compose.material3.ExperimentalMaterial3Api
+import tech.vasker.vector.trip.TripManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +63,9 @@ fun TalonApp() {
     val connectionState by obdHolder.connectionState.collectAsState()
     val liveValues by obdHolder.liveValues.collectAsState()
     val diagnosticsData by obdHolder.diagnosticsData.collectAsState()
+    val tripHolder = remember { TripManager.init(scope, context, obdHolder.liveValues, obdHolder.connectionState) }
+    val tripState by tripHolder.tripState.collectAsState()
+    val tripSummaries by tripHolder.tripSummaries.collectAsState()
 
     val isStale = connectionState !is ConnectionState.Connected &&
         (liveValues.speedMph != null || liveValues.rpm != null || liveValues.coolantF != null || liveValues.fuelPercent != null)
@@ -76,6 +79,15 @@ fun TalonApp() {
     ) { granted ->
         if (granted) showConnectSheet = true
     }
+    val tripPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (locationGranted) {
+            tripHolder.startTrip()
+        }
+    }
 
     fun openConnectSheet() {
         val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -88,6 +100,35 @@ fun TalonApp() {
             showConnectSheet = true
         } else {
             permissionLauncher.launch(permission)
+        }
+    }
+    fun startTripWithPermissions() {
+        val required = mutableListOf<String>()
+        val fineGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fineGranted && !coarseGranted) {
+            required.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            required.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val notificationsGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!notificationsGranted) {
+                required.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (required.isEmpty()) {
+            tripHolder.startTrip()
+        } else {
+            tripPermissionLauncher.launch(required.toTypedArray())
         }
     }
 
@@ -185,8 +226,11 @@ fun TalonApp() {
                 liveValues = liveValues,
                 isStale = isStale,
                 errorMessage = errorMessage,
+                tripState = tripState,
                 onConnectClick = { openConnectSheet() },
                 onDisconnectClick = { obdHolder.disconnect() },
+                onStartTrip = { startTripWithPermissions() },
+                onStopTrip = { tripHolder.stopTrip(userInitiated = true) },
             )
             1 -> DiagnosticsScreen(
                 modifier = Modifier
@@ -201,7 +245,7 @@ fun TalonApp() {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
-                trips = MockData.trips
+                trips = tripSummaries
             )
         }
     }

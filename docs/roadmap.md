@@ -115,6 +115,8 @@ Ship a real APK that connects to an OBD2 adapter and shows live vehicle data.
 
 ## PHASE 2 — Trip Recording (File‑Backed)
 
+**Implementation plan:** [Phase 2 implementation plan](implementation/phase2-implementation-plan.md)
+
 ### Objective
 Record trips reliably using hybrid GPS + OBD logic.
 
@@ -138,6 +140,8 @@ These files are the **authoritative representation** of a trip in Phase 2.
 ---
 
 ## PHASE 3 — Persistence & Migration
+
+**Implementation plan:** [Phase 3 implementation plan](implementation/phase3-implementation-plan.md)
 
 ### Objective
 Introduce structured persistence without breaking existing trips.
