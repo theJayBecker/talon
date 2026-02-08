@@ -24,6 +24,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,14 +32,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 import tech.vasker.vector.obd.ConnectionState
+import tech.vasker.vector.obd.FuelPercentQuality
 import tech.vasker.vector.obd.LivePidValues
 import tech.vasker.vector.ui.components.CircularFuelGauge
 import androidx.compose.ui.res.painterResource
 import tech.vasker.vector.R
-import tech.vasker.vector.trip.TripRecordingState
-import tech.vasker.vector.trip.TripState
-import java.util.Locale
 
 @Composable
 fun DashboardScreen(
@@ -47,31 +47,32 @@ fun DashboardScreen(
     liveValues: LivePidValues,
     isStale: Boolean,
     errorMessage: String?,
-    tripState: TripRecordingState,
+    gallonsBurnedSinceConnect: Double = 0.0,
+    sessionDistanceMiles: Double = 0.0,
+    tripDistanceMiles: Double? = null,
+    lastDeviceName: String? = null,
+    onReconnectClick: () -> Unit = {},
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
-    onStartTrip: () -> Unit,
-    onStopTrip: () -> Unit,
 ) {
     val connected = connectionState is ConnectionState.Connected
     val staleLabel = if (isStale) " (Stale)" else ""
-    val recording = tripState.state == TripState.ACTIVE
+    val hasLastDevice = !lastDeviceName.isNullOrBlank()
 
-    if (!connected && !recording) {
+    if (!connected) {
         ConnectView(
             modifier = modifier,
             connectionState = connectionState,
             errorMessage = errorMessage,
+            lastDeviceName = lastDeviceName,
+            hasLastDevice = hasLastDevice,
+            onReconnectClick = onReconnectClick,
             onConnectClick = onConnectClick,
         )
         return
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        HeaderRow(
-            title = "Dashboard",
-            onDisconnectClick = onDisconnectClick,
-        )
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -81,84 +82,26 @@ fun DashboardScreen(
         ) {
             FuelCard(
                 fuelPercent = liveValues.fuelPercent,
+                fuelPercentQuality = liveValues.fuelPercentQuality,
                 staleLabel = staleLabel,
+                gallonsBurnedSinceConnect = gallonsBurnedSinceConnect,
             )
             MetricGrid(
                 liveValues = liveValues,
                 staleLabel = staleLabel,
             )
-            TripCard(
-                tripState = tripState,
-                onStartTrip = onStartTrip,
-                onStopTrip = onStopTrip,
+            DistanceCard(
+                speedMph = liveValues.speedMph,
+                sessionDistanceMiles = sessionDistanceMiles,
+                tripDistanceMiles = tripDistanceMiles,
             )
             StatusStrip(
                 connectionState = connectionState,
                 isStale = isStale,
+                onDisconnectClick = onDisconnectClick,
             )
         }
     }
-}
-
-@Composable
-private fun TripCard(
-    tripState: TripRecordingState,
-    onStartTrip: () -> Unit,
-    onStopTrip: () -> Unit,
-) {
-    val recording = tripState.state == TripState.ACTIVE
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "TRIP",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = if (recording) "Recording" else "Not recording",
-                style = MaterialTheme.typography.titleMedium,
-                color = if (recording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TripStat(label = "Duration", value = formatDuration(tripState.durationSec))
-                TripStat(label = "Distance", value = String.format(Locale.US, "%.1f mi", tripState.distanceMi))
-                TripStat(
-                    label = "Fuel Used",
-                    value = tripState.fuelUsedPct?.let { String.format(Locale.US, "%.1f%%", it) } ?: "—",
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            if (recording) {
-                OutlinedButton(onClick = onStopTrip, modifier = Modifier.fillMaxWidth()) { Text("Stop Trip") }
-            } else {
-                Button(onClick = onStartTrip, modifier = Modifier.fillMaxWidth()) { Text("Start Trip") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TripStat(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(text = value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-    }
-}
-
-private fun formatDuration(seconds: Int): String {
-    val hours = seconds / 3600
-    val minutes = (seconds % 3600) / 60
-    return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
 }
 
 @Composable
@@ -166,6 +109,9 @@ private fun ConnectView(
     modifier: Modifier,
     connectionState: ConnectionState,
     errorMessage: String?,
+    lastDeviceName: String?,
+    hasLastDevice: Boolean,
+    onReconnectClick: () -> Unit,
     onConnectClick: () -> Unit,
 ) {
     val statusText = when (connectionState) {
@@ -271,10 +217,25 @@ private fun ConnectView(
                         enabled = false,
                     ) { Text("Connecting...") }
                 } else if (connectionState !is ConnectionState.Connected) {
-                    Button(
-                        onClick = onConnectClick,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Connect") }
+                    if (hasLastDevice) {
+                        Button(
+                            onClick = onReconnectClick,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (lastDeviceName != null) "Reconnect to $lastDeviceName" else "Reconnect"
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onConnectClick) {
+                            Text("Choose another device", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        Button(
+                            onClick = onConnectClick,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Connect") }
+                    }
                 }
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -307,46 +268,18 @@ private fun ConnectView(
 }
 
 @Composable
-private fun HeaderRow(
-    title: String,
-    onDisconnectClick: () -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(id = R.drawable.talonlogo),
-                    contentDescription = "Talon logo",
-                    modifier = Modifier.size(24.dp),
-                )
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            OutlinedButton(onClick = onDisconnectClick) { Text("Disconnect") }
-        }
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outline,
-        )
-    }
-}
-
-@Composable
 private fun FuelCard(
     fuelPercent: Float?,
+    fuelPercentQuality: FuelPercentQuality?,
     staleLabel: String,
+    gallonsBurnedSinceConnect: Double = 0.0,
 ) {
+    val qualityLabel = when (fuelPercentQuality) {
+        FuelPercentQuality.Stabilizing -> "Stabilizing…"
+        FuelPercentQuality.Good -> "Good"
+        FuelPercentQuality.Noisy -> "Noisy"
+        null -> null
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -357,29 +290,32 @@ private fun FuelCard(
             modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(
-                text = "FUEL",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            CircularFuelGauge(fuelPercent = fuelPercent, size = 180.dp, strokeWidth = 14.dp)
-            Spacer(modifier = Modifier.height(16.dp))
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Est. Range", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("— mi", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Δ Fuel (Trip)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("—%$staleLabel", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    text = "FUEL",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (qualityLabel != null) {
+                    Text(
+                        text = qualityLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            CircularFuelGauge(fuelPercent = fuelPercent, size = 180.dp, strokeWidth = 14.dp)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = String.format(Locale.US, "%.3f gal since connect", gallonsBurnedSinceConnect),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -399,7 +335,7 @@ private fun MetricGrid(
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("Coolant Temp", valueStr(liveValues.coolantF, ""), "°F", cardShape, borderColor)
-            MetricCard("Engine Load", "—", "%", cardShape, borderColor)
+            MetricCard("Intake pressure", valueStr(liveValues.mapKpa, ""), "kPa", cardShape, borderColor)
         }
     }
 }
@@ -444,9 +380,59 @@ private fun MetricCard(
 }
 
 @Composable
+private fun DistanceCard(
+    speedMph: Float?,
+    sessionDistanceMiles: Double,
+    tripDistanceMiles: Double?,
+) {
+    val distanceLabel = if (tripDistanceMiles != null) "Trip distance" else "Session distance"
+    val distanceMi = tripDistanceMiles ?: sessionDistanceMiles
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(
+                    text = "SPEED",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = speedMph?.let { String.format(Locale.US, "%.1f mph", it) } ?: "— mph",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = distanceLabel.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = String.format(Locale.US, "%.3f mi", distanceMi),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun StatusStrip(
     connectionState: ConnectionState,
     isStale: Boolean,
+    onDisconnectClick: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -457,28 +443,34 @@ private fun StatusStrip(
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when (connectionState) {
-                            is ConnectionState.Connected -> MaterialTheme.colorScheme.primary
-                            is ConnectionState.Connecting -> MaterialTheme.colorScheme.secondary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    ),
-            )
-            Spacer(modifier = Modifier.size(8.dp))
-            Text(
-                text = if (connectionState is ConnectionState.Connected) "Connected" else "Connecting...",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (isStale) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when (connectionState) {
+                                is ConnectionState.Connected -> MaterialTheme.colorScheme.primary
+                                is ConnectionState.Connecting -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        ),
+                )
                 Spacer(modifier = Modifier.size(8.dp))
-                Text("(Stale)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                Text(
+                    text = if (connectionState is ConnectionState.Connected) "Connected" else "Connecting...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (isStale) {
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("(Stale)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                }
+            }
+            if (connectionState is ConnectionState.Connected) {
+                OutlinedButton(onClick = onDisconnectClick) { Text("Disconnect") }
             }
         }
     }

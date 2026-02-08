@@ -48,7 +48,7 @@ This doctrine bounds scope and defines success across all phases.
 - Android project created
 - Jetpack Compose UI skeleton generated — **done** (MainActivity, TalonApp, 3 screens, bottom nav via tab index)
 - Navigation wired (Dashboard / Diagnostics / Trips) — **done** (tab index only, no NavHost)
-- Mock data flowing — **done** (`data/mock/MockData.kt`: dashboard, diagnostics, 2 trip summaries)
+- Mock data flowing — **done** (Phase 0; removed in cleanup — app now uses real OBD and TripManager)
 - **talon-ui:** Web reference UI with Dashboard, Diagnostics, Trips, Connect flow, trip start/stop, trip detail, and markdown export (clipboard). Mock OBD and mock diagnostics; in-memory trip repository. Trip types and export schema align with Phase 2 contract.
 
 **Exit Criteria**
@@ -165,6 +165,9 @@ Introduce structured persistence without breaking existing trips.
 ---
 
 ## PHASE 4 — Diagnostics Expansion
+
+**Implementation plan:** [Phase 4 implementation plan](implementation/phase4-implementation-plan.md)
+
 Add advanced standard OBD‑II diagnostics:
 - Fuel trims (STFT/LTFT)
 - Intake air temperature

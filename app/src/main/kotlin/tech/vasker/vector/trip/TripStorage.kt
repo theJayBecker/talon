@@ -47,9 +47,40 @@ class TripStorage(
         if (!samplesCsv.exists()) {
             samplesCsv.parentFile?.mkdirs()
             BufferedWriter(FileWriter(samplesCsv, false)).use { writer ->
-                writer.write("timestamp_iso,t_sec,speed_mph,rpm,fuel_pct,coolant_f,engine_load_pct,source_speed,flags")
+                writer.write("timestamp_iso,t_sec,speed_mph,rpm,fuel_pct,coolant_f,engine_load_pct,source_speed,flags,fuel_rate_lph,fuel_rate_gph,fuel_burned_gal_total,maf_gps,fuel_method,ts_ms,map_kpa,iat_c,tps_pct")
                 writer.newLine()
             }
+        }
+    }
+
+    /** Read recorded samples for a trip (from samples.csv). Returns empty list if file missing or unreadable. */
+    fun readSamples(tripId: String): List<TripSample> {
+        val csvFile = File(ensureTripDir(tripId), "samples.csv")
+        if (!csvFile.exists()) return emptyList()
+        return csvFile.readLines().drop(1).mapNotNull { line ->
+            if (line.isBlank()) return@mapNotNull null
+            val parts = line.split(",")
+            if (parts.size < 9) return@mapNotNull null
+            TripSample(
+                timestampIso = parts[0],
+                tSec = parts[1].toIntOrNull() ?: 0,
+                speedMph = parts[2].toDoubleOrNull(),
+                rpm = parts[3].toDoubleOrNull(),
+                fuelPct = parts[4].toDoubleOrNull(),
+                coolantF = parts[5].toDoubleOrNull(),
+                engineLoadPct = parts[6].toDoubleOrNull(),
+                sourceSpeed = parts.getOrNull(7) ?: "",
+                flags = parts.getOrNull(8) ?: "",
+                fuelRateLph = parts.getOrNull(9)?.toDoubleOrNull(),
+                fuelRateGph = parts.getOrNull(10)?.toDoubleOrNull(),
+                fuelBurnedGalTotal = parts.getOrNull(11)?.toDoubleOrNull(),
+                mafGps = parts.getOrNull(12)?.toDoubleOrNull(),
+                fuelMethod = parts.getOrNull(13),
+                tsMs = parts.getOrNull(14)?.toLongOrNull(),
+                mapKpa = parts.getOrNull(15)?.toDoubleOrNull(),
+                iatC = parts.getOrNull(16)?.toDoubleOrNull(),
+                tpsPct = parts.getOrNull(17)?.toDoubleOrNull(),
+            )
         }
     }
 
@@ -67,6 +98,15 @@ class TripStorage(
                     sample.engineLoadPct?.toString() ?: "",
                     sample.sourceSpeed,
                     sample.flags,
+                    sample.fuelRateLph?.toString() ?: "",
+                    sample.fuelRateGph?.toString() ?: "",
+                    sample.fuelBurnedGalTotal?.toString() ?: "",
+                    sample.mafGps?.toString() ?: "",
+                    sample.fuelMethod ?: "",
+                    sample.tsMs?.toString() ?: "",
+                    sample.mapKpa?.toString() ?: "",
+                    sample.iatC?.toString() ?: "",
+                    sample.tpsPct?.toString() ?: "",
                 ).joinToString(",")
             )
             writer.newLine()
@@ -99,6 +139,8 @@ class TripStorage(
                 durationSec = parsed.second.durationSec,
                 distanceMi = parsed.second.distanceMi,
                 fuelUsedPct = parsed.second.fuelUsedPct,
+                fuelBurnedGal = parsed.second.fuelBurnedGal,
+                fuelMethod = parsed.second.fuelMethod,
             )
         }?.sortedByDescending { it.startTime } ?: emptyList()
     }
@@ -125,6 +167,12 @@ class TripStorage(
                 Charsets.UTF_8
             )
         }
+    }
+
+    /** Deletes a trip's directory and all contents (samples, trip.json, etc.). */
+    fun deleteTrip(tripId: String) {
+        val dir = File(tripsRoot, tripId)
+        if (dir.exists()) dir.deleteRecursively()
     }
 
     private fun ensureTripDir(tripId: String): File {
@@ -154,6 +202,9 @@ class TripStorage(
         statsObj.put("fuelStartPct", stats.fuelStartPct ?: JSONObject.NULL)
         statsObj.put("fuelEndPct", stats.fuelEndPct ?: JSONObject.NULL)
         statsObj.put("fuelUsedPct", stats.fuelUsedPct ?: JSONObject.NULL)
+        statsObj.put("fuelBurnedGal", stats.fuelBurnedGal ?: JSONObject.NULL)
+        statsObj.put("avgFuelBurnGph", stats.avgFuelBurnGph ?: JSONObject.NULL)
+        statsObj.put("fuelMethod", stats.fuelMethod ?: JSONObject.NULL)
         statsObj.put("avgSpeedMph", stats.avgSpeedMph)
         statsObj.put("maxSpeedMph", stats.maxSpeedMph)
         statsObj.put("avgRpm", stats.avgRpm)
@@ -213,6 +264,8 @@ class TripStorage(
         var idleTimeSec = 0
         var fuelStart: Double? = null
         var fuelEnd: Double? = null
+        var fuelBurnedGal: Double? = null
+        var fuelMethod: String? = null
 
         csvFile.readLines().drop(1).forEach { line ->
             if (line.isBlank()) return@forEach
@@ -248,6 +301,8 @@ class TripStorage(
                 if (fuelStart == null) fuelStart = fuel
                 fuelEnd = fuel
             }
+            parts.getOrNull(11)?.toDoubleOrNull()?.let { fuelBurnedGal = it }
+            parts.getOrNull(13)?.takeIf { it.isNotBlank() }?.let { fuelMethod = it }
         }
 
         val durationSec = ((endTime - startTime) / 1000L).toInt()
@@ -262,6 +317,8 @@ class TripStorage(
             fuelStartPct = fuelStart,
             fuelEndPct = fuelEnd,
             fuelUsedPct = fuelUsed,
+            fuelBurnedGal = fuelBurnedGal,
+            fuelMethod = fuelMethod,
             avgSpeedMph = avgSpeed,
             maxSpeedMph = maxSpeed,
             avgRpm = avgRpm,

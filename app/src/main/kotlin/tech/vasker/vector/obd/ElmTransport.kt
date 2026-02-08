@@ -11,11 +11,24 @@ import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** Common interface for ELM327 transport (RFCOMM or BLE). */
+interface ElmTransportInterface {
+    @Throws(IOException::class)
+    fun connect(device: BluetoothDevice)
+    fun disconnect()
+    fun isConnected(): Boolean
+    @Throws(IOException::class)
+    fun sendCommand(cmd: String, timeoutMs: Long = 2000): String
+}
+
 /**
- * Bluetooth socket I/O for ELM327. All blocking methods (connect, sendCommand) must be
- * called from a background thread (e.g. Dispatchers.IO).
+ * RFCOMM/SPP socket I/O for ELM327. All blocking methods must be called from a background thread.
+ * Optional logger(direction, message) for TX and RX.
  */
-class ElmTransport(private val context: Context) {
+class ElmTransport(
+    private val context: Context,
+    private val logger: ((direction: String, message: String) -> Unit)? = null,
+) : ElmTransportInterface {
 
     companion object {
         private const val SPP_UUID = "00001101-0000-1000-8000-00805F9B34FB"
@@ -34,7 +47,7 @@ class ElmTransport(private val context: Context) {
      * @throws IOException with short message on failure (e.g. "Connection failed: timeout")
      */
     @Throws(IOException::class)
-    fun connect(device: BluetoothDevice) {
+    override fun connect(device: BluetoothDevice) {
         disconnect()
         try {
             val uuid = UUID.fromString(SPP_UUID)
@@ -51,7 +64,7 @@ class ElmTransport(private val context: Context) {
         }
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         connected.set(false)
         try {
             inputStream?.close()
@@ -67,7 +80,7 @@ class ElmTransport(private val context: Context) {
         socket = null
     }
 
-    fun isConnected(): Boolean = connected.get()
+    override fun isConnected(): Boolean = connected.get()
 
     /**
      * Send AT/OBD command and read until prompt ">" or timeout. Call from Dispatchers.IO.
@@ -76,7 +89,8 @@ class ElmTransport(private val context: Context) {
      * @throws IOException on write/read failure or timeout
      */
     @Throws(IOException::class)
-    fun sendCommand(cmd: String, timeoutMs: Long = 2000): String {
+    override fun sendCommand(cmd: String, timeoutMs: Long): String {
+        logger?.invoke("TX", cmd)
         val out = outputStream ?: throw IOException("Not connected")
         val input = inputStream ?: throw IOException("Not connected")
         try {
@@ -107,10 +121,13 @@ class ElmTransport(private val context: Context) {
                 }
             }
         }
-        if (!sb.contains(">")) {
+        val raw = sb.toString()
+        if (!raw.contains(">")) {
+            logger?.invoke("RX", "TIMEOUT")
             throw IOException("Connection failed: timeout")
         }
-        return sb.toString()
+        logger?.invoke("RX", raw)
+        return raw
             .replace(">", "")
             .split("\r", "\n")
             .joinToString(" ") { it.trim() }

@@ -15,6 +15,9 @@ data class TripStats(
     val fuelStartPct: Double?,
     val fuelEndPct: Double?,
     val fuelUsedPct: Double?,
+    val fuelBurnedGal: Double? = null,
+    val avgFuelBurnGph: Double? = null,
+    val fuelMethod: String? = null,
     val avgSpeedMph: Double,
     val maxSpeedMph: Double,
     val avgRpm: Double,
@@ -35,6 +38,15 @@ data class TripSample(
     val engineLoadPct: Double?,
     val sourceSpeed: String,
     val flags: String,
+    val fuelRateLph: Double? = null,
+    val fuelRateGph: Double? = null,
+    val fuelBurnedGalTotal: Double? = null,
+    val mafGps: Double? = null,
+    val fuelMethod: String? = null,
+    val tsMs: Long? = null,
+    val mapKpa: Double? = null,
+    val iatC: Double? = null,
+    val tpsPct: Double? = null,
 )
 
 data class TripSummary(
@@ -45,6 +57,8 @@ data class TripSummary(
     val durationSec: Int,
     val distanceMi: Double,
     val fuelUsedPct: Double?,
+    val fuelBurnedGal: Double? = null,
+    val fuelMethod: String? = null,
 )
 
 /** Full trip data for export: metadata, stats, and path to samples file. */
@@ -61,6 +75,7 @@ data class TripRecordingState(
     val durationSec: Int = 0,
     val distanceMi: Double = 0.0,
     val fuelUsedPct: Double? = null,
+    val gallonsBurnedTrip: Double? = null,
     val gpsAvailable: Boolean = false,
     val obdAvailable: Boolean = false,
     val status: TripStatus? = null,
@@ -73,6 +88,7 @@ enum class TripStatus {
 
 enum class RecordingMode {
     MANUAL,
+    AUTO,
 }
 
 enum class TripState {

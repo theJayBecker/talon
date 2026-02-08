@@ -30,6 +30,10 @@ class FileTripRepository(
         // No-op: primary writes go through Room + TripStorage in TripStateHolder
     }
 
+    override suspend fun deleteTrip(id: String) {
+        storage.deleteTrip(id)
+    }
+
     override suspend fun exportToTempAndShare(context: Context, tripId: String) {
         // Delegate to file-based export if needed; RoomTripRepository is the primary for export
     }

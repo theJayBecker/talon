@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import tech.vasker.vector.obd.ConnectionState
+import tech.vasker.vector.obd.DistanceAccumulator
 import tech.vasker.vector.obd.LivePidValues
+import tech.vasker.vector.obd.ObdCapabilities
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -25,12 +27,25 @@ private const val SAMPLE_INTERVAL_MS = 1000L
 private const val SIGNAL_LOSS_MS = 30_000L
 private const val UNAVAILABLE_MS = 5_000L
 private const val GPS_ACCURACY_M = 50f
+/** Min GPS speed (m/s) to consider "moving" for auto-start. ~4.5 mph */
+private const val AUTO_START_GPS_SPEED_MPS = 2f
+/** Min OBD speed (mph) to consider "moving" for auto-start */
+private const val AUTO_START_OBD_SPEED_MPH = 5.0
+/** Number of consecutive "moving" checks before auto-starting trip */
+private const val AUTO_START_MOVING_COUNT = 3
+private const val MONITORING_CHECK_INTERVAL_MS = 2500L
+private const val MONITORING_LOCATION_INTERVAL_MS = 3000L
+/** Minimum gallons to record in trip (avoids dropping small values like 0.01 due to thresholds). */
+private const val MIN_FUEL_GAL_RECORD = 1e-6
+/** Minimum miles to treat as recorded (for consistency; distance is always stored). */
+private const val MIN_DISTANCE_MI_RECORD = 1e-6
 
 class TripStateHolder(
     private val scope: CoroutineScope,
     private val context: Context,
     private val liveValues: StateFlow<LivePidValues>,
     private val connectionState: StateFlow<ConnectionState>,
+    private val capabilities: StateFlow<ObdCapabilities>,
     private val repository: TripRepository,
     private val storage: TripStorage,
 ) {
@@ -54,6 +69,17 @@ class TripStateHolder(
     private var lastLiveValues: LivePidValues = LivePidValues()
 
     private var lossStartMs: Long? = null
+
+    private var lastSampleTimeMs: Long = 0L
+    private var monitoringJob: Job? = null
+    private val tripDistanceAccumulator = DistanceAccumulator()
+
+    /** Call from ObdStateHolder when speed (010D) is parsed; integrates into trip distance when recording. */
+    fun onSpeedSample(speedKmh: Double, timestampMs: Long) {
+        if (_tripState.value.state == TripState.ACTIVE) {
+            tripDistanceAccumulator.update(speedKmh, timestampMs)
+        }
+    }
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -87,15 +113,26 @@ class TripStateHolder(
                 }
             }
         }
+        scope.launch {
+            connectionState.collect { state ->
+                if (state is ConnectionState.Connected && _tripState.value.state != TripState.ACTIVE) {
+                    startTrip(isAutoStart = true)
+                }
+                // Stop on disconnect is handled via ObdStateHolder.onDisconnecting so gallons are captured before reset
+            }
+        }
     }
 
-    fun startTrip() {
+    fun startTrip(isAutoStart: Boolean = false) {
         if (_tripState.value.state == TripState.ACTIVE) return
+        stopMonitoring()
         val tripId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
         val fuelStart = lastLiveValues.fuelPercent?.toDouble()
+        val mode = if (isAutoStart) RecordingMode.AUTO else RecordingMode.MANUAL
         storage.startTrip(tripId, startTime, fuelStart)
-        session = TripSession(tripId, startTime, fuelStart)
+        tripDistanceAccumulator.reset()
+        session = TripSession(tripId, startTime, fuelStart, recordingMode = mode, fuelMethod = "NONE")
         lossStartMs = null
         _tripState.value = TripRecordingState(
             state = TripState.ACTIVE,
@@ -104,6 +141,7 @@ class TripStateHolder(
             durationSec = 0,
             distanceMi = 0.0,
             fuelUsedPct = null,
+            gallonsBurnedTrip = null,
             gpsAvailable = false,
             obdAvailable = false,
             status = null,
@@ -113,14 +151,30 @@ class TripStateHolder(
         RecordingService.start(context)
     }
 
-    fun stopTrip(userInitiated: Boolean) {
+    fun stopTrip(userInitiated: Boolean, gallonsBurnedSinceConnect: Double? = null) {
+        val gallonsToApply = gallonsBurnedSinceConnect
         scope.launch(Dispatchers.IO) {
+            if (gallonsToApply != null) {
+                session?.gallonsBurnedTrip = gallonsToApply
+            }
+            session?.distanceMi = tripDistanceAccumulator.totalDistanceMiles
             stopTripInternal(
-                endReason = if (userInitiated) null else "signal_loss",
+                endReason = if (userInitiated) null else "disconnect",
                 forcedStatus = if (userInitiated) null else TripStatus.PARTIAL,
             )
         }
     }
+
+    suspend fun getTripDetail(id: String): TripDetail? = repository.getTrip(id)
+
+    fun deleteTrips(ids: List<String>) {
+        if (ids.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            repository.deleteTrips(ids)
+        }
+    }
+
+    fun getSamples(tripId: String): List<TripSample> = storage.readSamples(tripId)
 
     fun exportTrip(context: Context, tripId: String) {
         scope.launch(Dispatchers.IO) {
@@ -145,6 +199,50 @@ class TripStateHolder(
         }
     }
 
+    /** When OBD connected and not recording: request location and check for movement to auto-start. */
+    private fun startMonitoring() {
+        if (monitoringJob?.isActive == true) return
+        try {
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER,
+                MONITORING_LOCATION_INTERVAL_MS,
+                0f,
+                locationListener
+            )
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Location permission missing for monitoring", e)
+            return
+        }
+        monitoringJob?.cancel()
+        monitoringJob = scope.launch(Dispatchers.IO) {
+            var movingCount = 0
+            while (_tripState.value.state != TripState.ACTIVE) {
+                if (connectionState.value !is ConnectionState.Connected) break
+                val gpsMoving = lastGpsSpeedMps != null && lastGpsSpeedMps!! >= AUTO_START_GPS_SPEED_MPS
+                val obdMoving = lastObdSpeedMph != null && lastObdSpeedMph!! >= AUTO_START_OBD_SPEED_MPH
+                if (gpsMoving || obdMoving) {
+                    movingCount++
+                    if (movingCount >= AUTO_START_MOVING_COUNT) {
+                        Log.d(TAG, "Auto-starting trip: GPS or OBD movement detected")
+                        startTrip(isAutoStart = true)
+                        break
+                    }
+                } else {
+                    movingCount = 0
+                }
+                delay(MONITORING_CHECK_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopMonitoring() {
+        monitoringJob?.cancel()
+        monitoringJob = null
+        if (_tripState.value.state != TripState.ACTIVE) {
+            stopLocationUpdates()
+        }
+    }
+
     private fun stopLocationUpdates() {
         try {
             locationManager.removeUpdates(locationListener)
@@ -154,6 +252,7 @@ class TripStateHolder(
 
     private fun startSampling() {
         samplingJob?.cancel()
+        lastSampleTimeMs = 0L
         samplingJob = scope.launch(Dispatchers.IO) {
             while (_tripState.value.state == TripState.ACTIVE) {
                 val now = System.currentTimeMillis()
@@ -173,23 +272,38 @@ class TripStateHolder(
                 }
 
                 val currentSession = session ?: break
+                /** Read latest OBD snapshot so we don't use stale lastLiveValues (sampling runs on IO, collector on another thread). */
+                val currentLive = liveValues.value
+                lastSampleTimeMs = now
+                val iatC = currentLive.intakeAirTempF?.let { (it - 32) * 5.0 / 9.0 }
                 val sample = TripSample(
                     timestampIso = TripStorage.formatIso(now),
                     tSec = ((now - currentSession.startTime) / 1000L).toInt(),
                     speedMph = speedMph,
-                    rpm = lastLiveValues.rpm?.toDouble(),
-                    fuelPct = lastLiveValues.fuelPercent?.toDouble(),
-                    coolantF = lastLiveValues.coolantF?.toDouble(),
+                    rpm = currentLive.rpm?.toDouble(),
+                    fuelPct = currentLive.fuelPercent?.toDouble(),
+                    coolantF = currentLive.coolantF?.toDouble(),
                     engineLoadPct = null,
                     sourceSpeed = sourceSpeed,
                     flags = flags,
+                    fuelRateLph = null,
+                    fuelRateGph = null,
+                    fuelBurnedGalTotal = currentSession.gallonsBurnedTrip.takeIf { it >= MIN_FUEL_GAL_RECORD },
+                    mafGps = null,
+                    fuelMethod = currentSession.fuelMethod,
+                    tsMs = now,
+                    mapKpa = currentLive.mapKpa?.toDouble(),
+                    iatC = iatC,
+                    tpsPct = currentLive.throttlePercent?.toDouble(),
                 )
                 storage.appendSample(currentSession.tripId, sample)
                 currentSession.updateWithSample(sample)
+                currentSession.distanceMi = tripDistanceAccumulator.totalDistanceMiles
                 _tripState.value = _tripState.value.copy(
                     durationSec = currentSession.durationSec(),
                     distanceMi = currentSession.distanceMi,
                     fuelUsedPct = currentSession.fuelUsedPct(),
+                    gallonsBurnedTrip = if (_tripState.value.state == TripState.ACTIVE) currentSession.gallonsBurnedTrip else null,
                     gpsAvailable = gpsAvailable,
                     obdAvailable = obdAvailable,
                 )
@@ -244,7 +358,7 @@ class TripStateHolder(
             startTime = current.startTime,
             endTime = endTime,
             status = status,
-            recordingMode = RecordingMode.MANUAL,
+            recordingMode = current.recordingMode,
             endReason = endReason,
         )
         val stats = current.buildStats(endTime)
@@ -263,8 +377,11 @@ class TripStateHolder(
         val tripId: String,
         val startTime: Long,
         val fuelStartPct: Double?,
+        val recordingMode: RecordingMode = RecordingMode.MANUAL,
+        val fuelMethod: String = "NONE",
         var fuelEndPct: Double? = null,
         var distanceMi: Double = 0.0,
+        var gallonsBurnedTrip: Double = 0.0,
         var sumSpeed: Double = 0.0,
         var countSpeed: Int = 0,
         var maxSpeed: Double = 0.0,
@@ -313,12 +430,18 @@ class TripStateHolder(
             val avgRpm = if (countRpm > 0) sumRpm / countRpm else 0.0
             val avgCoolant = if (countCoolant > 0) sumCoolant / countCoolant else 0.0
             val fuelUsed = fuelUsedPct()
+            val avgFuelBurnGph = if (durationSec > 0 && gallonsBurnedTrip >= MIN_FUEL_GAL_RECORD) {
+                gallonsBurnedTrip / (durationSec / 3600.0)
+            } else null
             return TripStats(
                 durationSec = durationSec,
                 distanceMi = distanceMi,
                 fuelStartPct = fuelStartPct,
                 fuelEndPct = fuelEndPct,
                 fuelUsedPct = fuelUsed,
+                fuelBurnedGal = gallonsBurnedTrip.takeIf { gallonsBurnedTrip >= MIN_FUEL_GAL_RECORD },
+                avgFuelBurnGph = avgFuelBurnGph,
+                fuelMethod = fuelMethod,
                 avgSpeedMph = avgSpeed,
                 maxSpeedMph = maxSpeed,
                 avgRpm = avgRpm,

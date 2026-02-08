@@ -26,6 +26,12 @@ class RoomTripRepository(
         return toDetail(entity)
     }
 
+    override suspend fun deleteTrip(id: String) {
+        dao.deleteById(id)
+        val tripDir = File(context.getExternalFilesDir(null), "trips").resolve(id)
+        if (tripDir.exists()) tripDir.deleteRecursively()
+    }
+
     override suspend fun insertTrip(metadata: TripMetadata, stats: TripStats, samplesPath: String?) {
         dao.insert(
             TripEntity(
@@ -42,6 +48,9 @@ class RoomTripRepository(
                 fuelStartPct = stats.fuelStartPct,
                 fuelEndPct = stats.fuelEndPct,
                 fuelUsedPct = stats.fuelUsedPct,
+                fuelBurnedGal = stats.fuelBurnedGal,
+                avgFuelBurnGph = stats.avgFuelBurnGph,
+                fuelMethod = stats.fuelMethod,
                 avgSpeedMph = stats.avgSpeedMph,
                 maxSpeedMph = stats.maxSpeedMph,
                 avgRpm = stats.avgRpm,
@@ -97,6 +106,8 @@ class RoomTripRepository(
             durationSec = entity.durationSec,
             distanceMi = entity.distanceMi,
             fuelUsedPct = entity.fuelUsedPct,
+            fuelBurnedGal = entity.fuelBurnedGal,
+            fuelMethod = entity.fuelMethod,
         )
 
     private fun toDetail(entity: TripEntity): TripDetail =
@@ -115,6 +126,9 @@ class RoomTripRepository(
                 fuelStartPct = entity.fuelStartPct,
                 fuelEndPct = entity.fuelEndPct,
                 fuelUsedPct = entity.fuelUsedPct,
+                fuelBurnedGal = entity.fuelBurnedGal,
+                avgFuelBurnGph = entity.avgFuelBurnGph,
+                fuelMethod = entity.fuelMethod,
                 avgSpeedMph = entity.avgSpeedMph,
                 maxSpeedMph = entity.maxSpeedMph,
                 avgRpm = entity.avgRpm,

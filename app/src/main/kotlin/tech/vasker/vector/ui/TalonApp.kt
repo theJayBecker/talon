@@ -3,6 +3,7 @@ package tech.vasker.vector.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
@@ -34,17 +35,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import tech.vasker.vector.obd.ConnectionState
 import tech.vasker.vector.obd.ObdStateHolder
+import tech.vasker.vector.trip.TripState
 import tech.vasker.vector.ui.screen.DashboardScreen
 import tech.vasker.vector.ui.screen.DiagnosticsScreen
+import tech.vasker.vector.ui.screen.TripDetailScreen
 import tech.vasker.vector.ui.screen.TripsScreen
+import tech.vasker.vector.trip.TripDetail
+import tech.vasker.vector.trip.TripNotificationState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -63,13 +70,56 @@ fun TalonApp() {
     val connectionState by obdHolder.connectionState.collectAsState()
     val liveValues by obdHolder.liveValues.collectAsState()
     val diagnosticsData by obdHolder.diagnosticsData.collectAsState()
-    val tripHolder = remember { TripManager.init(scope, context, obdHolder.liveValues, obdHolder.connectionState) }
+    val fuelBurnSession by obdHolder.fuelBurnSession.collectAsState()
+    val sessionDistanceMiles by obdHolder.sessionDistanceMiles.collectAsState()
+    val obdLogLines by obdHolder.obdLogLines.collectAsState()
+    val tripHolder = remember { TripManager.init(scope, context, obdHolder.liveValues, obdHolder.connectionState, obdHolder.capabilities) }
     val tripState by tripHolder.tripState.collectAsState()
     val tripSummaries by tripHolder.tripSummaries.collectAsState()
+
+    var selectedTripId by remember { mutableStateOf<String?>(null) }
+    var tripDetail by remember { mutableStateOf<TripDetail?>(null) }
+    LaunchedEffect(selectedTripId) {
+        tripDetail = selectedTripId?.let { tripHolder.getTripDetail(it) } ?: null
+    }
 
     val isStale = connectionState !is ConnectionState.Connected &&
         (liveValues.speedMph != null || liveValues.rpm != null || liveValues.coolantF != null || liveValues.fuelPercent != null)
     val errorMessage = (connectionState as? ConnectionState.Error)?.message
+
+    LaunchedEffect(Unit) {
+        obdHolder.tryAutoConnect()
+    }
+    LaunchedEffect(obdHolder, tripHolder) {
+        obdHolder.onDisconnecting = { gallonsBurned ->
+            tripHolder.stopTrip(userInitiated = false, gallonsBurnedSinceConnect = gallonsBurned)
+        }
+        obdHolder.onSpeedSample = { speedKmh, timestampMs ->
+            tripHolder.onSpeedSample(speedKmh, timestampMs)
+        }
+    }
+
+    // Push live trip stats to foreground notification (burn rate, distance, fuel %) every 2s while trip is active
+    LaunchedEffect(obdHolder, tripHolder) {
+        while (true) {
+            delay(2000)
+            val state = tripHolder.tripState.value
+            val conn = obdHolder.connectionState.value
+            if (state.state != TripState.ACTIVE || conn !is ConnectionState.Connected) {
+                TripNotificationState.clear()
+                continue
+            }
+            val gallons = obdHolder.fuelBurnSession.value.gallonsBurned
+            val connectMs = obdHolder.getConnectElapsedMs()
+            val elapsedH = if (connectMs != null) (SystemClock.elapsedRealtime() - connectMs) / 3600000.0 else 0.0
+            val gph = if (elapsedH > 0) gallons / elapsedH else null
+            TripNotificationState.update(
+                state.distanceMi,
+                gph,
+                obdHolder.liveValues.value.fuelPercent?.toDouble(),
+            )
+        }
+    }
 
     var showConnectSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -78,15 +128,6 @@ fun TalonApp() {
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) showConnectSheet = true
-    }
-    val tripPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (locationGranted) {
-            tripHolder.startTrip()
-        }
     }
 
     fun openConnectSheet() {
@@ -100,35 +141,6 @@ fun TalonApp() {
             showConnectSheet = true
         } else {
             permissionLauncher.launch(permission)
-        }
-    }
-    fun startTripWithPermissions() {
-        val required = mutableListOf<String>()
-        val fineGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!fineGranted && !coarseGranted) {
-            required.add(Manifest.permission.ACCESS_FINE_LOCATION)
-            required.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val notificationsGranted = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!notificationsGranted) {
-                required.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-        if (required.isEmpty()) {
-            tripHolder.startTrip()
-        } else {
-            tripPermissionLauncher.launch(required.toTypedArray())
         }
     }
 
@@ -146,8 +158,21 @@ fun TalonApp() {
                 @Suppress("DEPRECATION")
                 adapter?.bondedDevices?.toList() ?: emptyList()
             }
+            val lastName = obdHolder.getLastDeviceName()
+            val hasLast = obdHolder.hasLastDevice()
+            if (hasLast && lastName != null) {
+                ListItem(
+                    headlineContent = { Text("Reconnect to $lastName") },
+                    supportingContent = { Text("Use last connected device", style = MaterialTheme.typography.bodySmall) },
+                    modifier = Modifier.clickable {
+                        obdHolder.tryAutoConnect()
+                        showConnectSheet = false
+                    },
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            }
             Text(
-                text = "Select from paired devices.",
+                text = "Or choose another paired device",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
@@ -226,11 +251,13 @@ fun TalonApp() {
                 liveValues = liveValues,
                 isStale = isStale,
                 errorMessage = errorMessage,
-                tripState = tripState,
+                gallonsBurnedSinceConnect = fuelBurnSession.gallonsBurned,
+                sessionDistanceMiles = sessionDistanceMiles,
+                tripDistanceMiles = if (tripState.state == TripState.ACTIVE) tripState.distanceMi else null,
+                lastDeviceName = obdHolder.getLastDeviceName(),
+                onReconnectClick = { obdHolder.tryAutoConnect() },
                 onConnectClick = { openConnectSheet() },
                 onDisconnectClick = { obdHolder.disconnect() },
-                onStartTrip = { startTripWithPermissions() },
-                onStopTrip = { tripHolder.stopTrip(userInitiated = true) },
             )
             1 -> DiagnosticsScreen(
                 modifier = Modifier
@@ -238,16 +265,41 @@ fun TalonApp() {
                     .padding(paddingValues),
                 connectionState = connectionState,
                 diagnosticsData = diagnosticsData,
+                liveValues = liveValues,
                 onReadCodes = { obdHolder.refreshDiagnostics() },
                 onClearCodes = { obdHolder.clearDtc() },
+                onLoadFreezeFrame = { obdHolder.loadFreezeFrame() },
+                obdLogLines = obdLogLines,
+                onClearObdLog = { obdHolder.clearObdLog() },
+                onRunProbe = { obdHolder.runCapabilityProbe() },
+                onCopyObdLog = {
+                    val clip = android.content.ClipData.newPlainText("OBD Log", obdHolder.getLogTextForCopy())
+                    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                },
             )
-            2 -> TripsScreen(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                trips = tripSummaries,
-                onExportTrip = { tripId -> tripHolder.exportTrip(context, tripId) },
-            )
+            2 -> {
+                if (tripDetail != null) {
+                    TripDetailScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(paddingValues),
+                        detail = tripDetail!!,
+                        onBack = { selectedTripId = null },
+                        onExport = { tripHolder.exportTrip(context, tripDetail!!.metadata.id) },
+                    )
+                } else {
+                    TripsScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(paddingValues),
+                        trips = tripSummaries,
+                        selectedTripId = selectedTripId,
+                        onTripClick = { selectedTripId = it },
+                        onExportTrip = { tripId -> tripHolder.exportTrip(context, tripId) },
+                        onDeleteTrips = { ids -> tripHolder.deleteTrips(ids) },
+                    )
+                }
+            }
         }
     }
 }

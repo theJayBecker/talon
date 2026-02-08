@@ -23,4 +23,7 @@ interface TripDao {
 
     @Query("UPDATE trips SET notes = :notes WHERE id = :id")
     suspend fun updateNotes(id: String, notes: String?)
+
+    @Query("DELETE FROM trips WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

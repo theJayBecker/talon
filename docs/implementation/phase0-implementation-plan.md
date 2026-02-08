@@ -12,10 +12,10 @@ Implement Phase 0 for Project TALON (Android) with the **smallest possible surfa
 |------|------|
 | 1) App launch (Compose, MainActivity, manifest launcher) | ✅ |
 | 2) Bottom nav, 3 tabs, `selectedTabIndex` in `TalonApp` | ✅ |
-| 3) Mock data in `data/mock/MockData.kt` (dashboard, diagnostics, trips) | ✅ |
-| 4) Screens wired to mock values (Dashboard, Diagnostics, Trips) | ✅ |
+| 3) Mock data (dashboard, diagnostics, trips) — used in Phase 0; removed in cleanup | ✅ |
+| 4) Screens wired to live/mock values (Dashboard, Diagnostics, Trips) | ✅ |
 
-**Implemented structure:** `MainActivity` → `setContent { TalonApp() }`; `TalonApp` holds `selectedTabIndex`, `NavigationBar` with 3 items, `when(selectedTabIndex)` → `DashboardScreen` / `DiagnosticsScreen` / `TripsScreen`. Single mock object `MockData` with `DashboardMock`, `DiagnosticsMock`, and `List<TripSummaryMock>` (2 trips, UUID ids). No NavHost, no ViewModels, no trip detail; connection state static ("Mock").
+**Implemented structure:** `MainActivity` → `setContent { TalonApp() }`; `TalonApp` holds `selectedTabIndex`, bottom bar with 3 tabs, `when(selectedTabIndex)` → `DashboardScreen` / `DiagnosticsScreen` / `TripsScreen`. Dashboard and Diagnostics now use real state from `ObdStateHolder`; Trips use `TripManager` / Room. No NavHost, no ViewModels for tabs; trip detail and export exist. (Phase 0 originally used a single mock object; that code was removed in cleanup.)
 
 ---
 

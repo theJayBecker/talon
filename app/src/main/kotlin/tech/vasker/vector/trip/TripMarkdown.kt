@@ -22,21 +22,19 @@ fun generateTripMarkdown(
     sb.appendLine("start: $startIso")
     if (endIso.isNotEmpty()) sb.appendLine("end: $endIso")
     sb.appendLine("duration_sec: ${stats.durationSec}")
-    sb.appendLine("distance_mi: ${formatDouble(stats.distanceMi)}")
+    sb.appendLine("distance_mi: ${formatDistanceMi(stats.distanceMi)}")
+    sb.appendLine("distance_miles: ${formatDistanceMi(stats.distanceMi)}")
     sb.appendLine("fuel_start_pct: ${formatNullable(stats.fuelStartPct)}")
     sb.appendLine("fuel_end_pct: ${formatNullable(stats.fuelEndPct)}")
     sb.appendLine("fuel_used_pct: ${formatNullable(stats.fuelUsedPct)}")
-    sb.appendLine("avg_speed_mph: ${formatDouble(stats.avgSpeedMph)}")
-    sb.appendLine("max_speed_mph: ${formatDouble(stats.maxSpeedMph)}")
-    sb.appendLine("avg_rpm: ${formatDouble(stats.avgRpm)}")
-    sb.appendLine("max_rpm: ${formatDouble(stats.maxRpm)}")
-    sb.appendLine("avg_coolant_f: ${formatDouble(stats.avgCoolantF)}")
-    sb.appendLine("max_coolant_f: ${formatDouble(stats.maxCoolantF)}")
-    sb.appendLine("max_load_pct: ${formatDouble(stats.maxLoadPct)}")
-    sb.appendLine("idle_time_sec: ${stats.idleTimeSec}")
-    sb.appendLine("recording_mode: ${metadata.recordingMode.name.lowercase()}")
+    sb.appendLine("fuel_burned_gal: ${formatNullableFuelGal(stats.fuelBurnedGal)}")
+    sb.appendLine("fuel_used_gallons: ${formatNullableFuelGal(stats.fuelBurnedGal)}")
+    stats.avgFuelBurnGph?.let { sb.appendLine("avg_fuel_burn_gph: ${formatDouble(it)}") }
+    stats.fuelMethod?.let { sb.appendLine("fuel_method: $it") }
+    val mpg = if (stats.fuelBurnedGal != null && stats.fuelBurnedGal!! > 0 && stats.distanceMi > 0)
+        stats.distanceMi / stats.fuelBurnedGal!! else null
+    mpg?.let { sb.appendLine("mpg: ${formatDouble(it)}") }
     sb.appendLine("status: ${metadata.status.name.lowercase()}")
-    metadata.endReason?.let { sb.appendLine("end_reason: $it") }
     sb.appendLine("---")
     sb.appendLine()
     sb.appendLine("# Trip - $titleDate")
@@ -46,17 +44,10 @@ fun generateTripMarkdown(
     sb.appendLine("| Field | Value |")
     sb.appendLine("| --- | --- |")
     sb.appendLine("| Duration | ${formatDuration(stats.durationSec)} |")
-    sb.appendLine("| Distance | ${formatDouble(stats.distanceMi)} mi |")
+    sb.appendLine("| Distance | ${formatDistanceMi(stats.distanceMi)} mi |")
     sb.appendLine("| Fuel Used | ${formatNullable(stats.fuelUsedPct)}% |")
-    sb.appendLine("| Avg Speed | ${formatDouble(stats.avgSpeedMph)} mph |")
-    sb.appendLine("| Max Speed | ${formatDouble(stats.maxSpeedMph)} mph |")
-    sb.appendLine("| Avg RPM | ${formatDouble(stats.avgRpm)} |")
-    sb.appendLine("| Max RPM | ${formatDouble(stats.maxRpm)} |")
-    sb.appendLine("| Avg Coolant | ${formatDouble(stats.avgCoolantF)} F |")
-    sb.appendLine("| Max Coolant | ${formatDouble(stats.maxCoolantF)} F |")
-    sb.appendLine("| Max Load | ${formatDouble(stats.maxLoadPct)}% |")
-    sb.appendLine("| Idle Time | ${stats.idleTimeSec} sec |")
-    sb.appendLine("| Recording Mode | ${metadata.recordingMode.name.lowercase()} |")
+    sb.appendLine("| Fuel Burned | ${formatNullableFuelGal(stats.fuelBurnedGal)} gal |")
+    sb.appendLine("| MPG | ${mpg?.let { formatDouble(it) } ?: "—"} |")
     sb.appendLine("| Status | ${metadata.status.name.lowercase()} |")
 
     if (includeSamples) {
@@ -88,7 +79,17 @@ fun generateTripMarkdown(
 
 private fun formatDouble(value: Double): String = String.format(Locale.US, "%.1f", value)
 
+private fun formatMiles(value: Double): String = String.format(Locale.US, "%.2f", value)
+
+/** Distance miles: 3 decimals so small values (e.g. 0.01 mi) are visible in export. */
+private fun formatDistanceMi(value: Double): String = String.format(Locale.US, "%.3f", value)
+
+/** Fuel gallons: 3 decimals so small values (e.g. 0.01) are visible. */
+private fun formatFuelGal(value: Double): String = String.format(Locale.US, "%.3f", value)
+
 private fun formatNullable(value: Double?): String = value?.let { formatDouble(it) } ?: "—"
+
+private fun formatNullableFuelGal(value: Double?): String = value?.let { formatFuelGal(it) } ?: "—"
 
 private fun formatDuration(seconds: Int): String {
     val hours = seconds / 3600

@@ -3,32 +3,35 @@ package tech.vasker.vector.obd
 import android.bluetooth.BluetoothDevice
 import android.util.Log
 import java.io.IOException
-
 /**
  * ELM327 client: init sequence, ATI liveness, and OBD command send.
- * Caller must ensure only one command in flight at a time.
+ * All commands go through ObdCommandQueue (single in-flight).
  */
-class ElmClient(private val transport: ElmTransport) {
+class ElmClient(
+    private val transport: ElmTransportInterface,
+    private val queue: ObdCommandQueue,
+) {
 
     companion object {
         private const val TAG = "ElmClient"
-        private const val CMD_TIMEOUT_MS = 2000L
+        private const val INIT_TIMEOUT_MS = 1500L
+        private const val OBD_TIMEOUT_MS = 2500L
     }
 
     /**
-     * Connect to device, run init commands (2s timeout each, no retries), then ATI.
-     * Call from Dispatchers.IO.
+     * Connect to device, run init commands through queue (1500 ms each), then ATI.
+     * Call from Dispatchers.IO coroutine.
      */
     @Throws(IOException::class)
-    fun connect(device: BluetoothDevice) {
+    suspend fun connect(device: BluetoothDevice) {
         transport.connect(device)
         try {
             for (cmd in ObdCommands.INIT_COMMANDS) {
-                transport.sendCommand(cmd, CMD_TIMEOUT_MS)
+                queue.sendCommand(cmd, INIT_TIMEOUT_MS)
             }
-            val atiResponse = transport.sendCommand(ObdCommands.ATI, CMD_TIMEOUT_MS)
+            val atiResponse = queue.sendCommand(ObdCommands.ATI, INIT_TIMEOUT_MS)
             Log.d(TAG, "ATI: $atiResponse")
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             transport.disconnect()
             throw IOException("Connection failed: ${e.message ?: "timeout"}", e)
         }
@@ -39,8 +42,8 @@ class ElmClient(private val transport: ElmTransport) {
     }
 
     /**
-     * Send one OBD command and return raw response. Single command in flight (enforced by caller).
+     * Send one OBD command via queue. Returns normalized response.
      */
     @Throws(IOException::class)
-    fun sendObdCommand(cmd: String): String = transport.sendCommand(cmd, CMD_TIMEOUT_MS)
+    suspend fun sendObdCommand(cmd: String): String = queue.sendCommand(cmd, OBD_TIMEOUT_MS)
 }

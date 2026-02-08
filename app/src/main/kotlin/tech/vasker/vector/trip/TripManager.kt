@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import tech.vasker.vector.data.db.Phase2ToRoomMigration
 import tech.vasker.vector.data.db.TalonDatabase
 import tech.vasker.vector.obd.ConnectionState
+import tech.vasker.vector.obd.ObdCapabilities
 import tech.vasker.vector.obd.LivePidValues
 
 object TripManager {
@@ -17,6 +18,7 @@ object TripManager {
         context: Context,
         liveValues: StateFlow<LivePidValues>,
         connectionState: StateFlow<ConnectionState>,
+        capabilities: StateFlow<ObdCapabilities>,
     ): TripStateHolder {
         val existing = holder
         if (existing != null) return existing
@@ -26,7 +28,7 @@ object TripManager {
                 val database = TalonDatabase.get(context)
                 Phase2ToRoomMigration.migrate(context, database.tripDao())
                 val repository = RoomTripRepository(database.tripDao(), context)
-                TripStateHolder(scope, context, liveValues, connectionState, repository, storage)
+                TripStateHolder(scope, context, liveValues, connectionState, capabilities, repository, storage)
             }.also { holder = it }
         }
     }
