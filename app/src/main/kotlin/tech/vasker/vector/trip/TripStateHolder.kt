@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +74,9 @@ class TripStateHolder(
     private var lastSampleTimeMs: Long = 0L
     private var monitoringJob: Job? = null
     private val tripDistanceAccumulator = DistanceAccumulator()
+
+    /** When stopTrip(userInitiated=true) is called without gallons, this provider is used (e.g. from notification). Set from app. */
+    var gallonsProvider: (() -> Double?)? = null
 
     /** Call from ObdStateHolder when speed (010D) is parsed; integrates into trip distance when recording. */
     fun onSpeedSample(speedKmh: Double, timestampMs: Long) {
@@ -152,12 +156,16 @@ class TripStateHolder(
     }
 
     fun stopTrip(userInitiated: Boolean, gallonsBurnedSinceConnect: Double? = null) {
-        val gallonsToApply = gallonsBurnedSinceConnect
-        scope.launch(Dispatchers.IO) {
+        val gallonsToApply = gallonsBurnedSinceConnect ?: (if (userInitiated) gallonsProvider?.invoke() else null)
+        // Use GlobalScope so this save always runs to completion even if the UI scope is cancelled (e.g. on disconnect).
+        GlobalScope.launch(Dispatchers.IO) {
             if (gallonsToApply != null) {
                 session?.gallonsBurnedTrip = gallonsToApply
             }
-            session?.distanceMi = tripDistanceAccumulator.totalDistanceMiles
+            // Use max of accumulator and session value so we never save less than what the sampling loop last wrote (avoids race where read happens before final update).
+            val accMi = tripDistanceAccumulator.totalDistanceMiles
+            val sessionMi = session?.distanceMi ?: 0.0
+            session?.distanceMi = maxOf(accMi, sessionMi)
             stopTripInternal(
                 endReason = if (userInitiated) null else "disconnect",
                 forcedStatus = if (userInitiated) null else TripStatus.PARTIAL,

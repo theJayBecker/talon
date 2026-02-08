@@ -5,6 +5,7 @@ package tech.vasker.vector.obd
  * Uses monotonic time; guards against bad dt and unrealistic speeds.
  */
 class DistanceAccumulator {
+    @Volatile
     var totalDistanceMiles: Double = 0.0
         private set
     private var lastTimestampMs: Long? = null

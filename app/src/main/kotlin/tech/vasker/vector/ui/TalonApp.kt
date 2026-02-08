@@ -91,6 +91,7 @@ fun TalonApp() {
         obdHolder.tryAutoConnect()
     }
     LaunchedEffect(obdHolder, tripHolder) {
+        tripHolder.gallonsProvider = { obdHolder.fuelBurnSession.value.gallonsBurned }
         obdHolder.onDisconnecting = { gallonsBurned ->
             tripHolder.stopTrip(userInitiated = false, gallonsBurnedSinceConnect = gallonsBurned)
         }
@@ -257,7 +258,12 @@ fun TalonApp() {
                 lastDeviceName = obdHolder.getLastDeviceName(),
                 onReconnectClick = { obdHolder.tryAutoConnect() },
                 onConnectClick = { openConnectSheet() },
-                onDisconnectClick = { obdHolder.disconnect() },
+                onStopTripClick = {
+                    tripHolder.stopTrip(
+                        userInitiated = true,
+                        gallonsBurnedSinceConnect = obdHolder.fuelBurnSession.value.gallonsBurned,
+                    )
+                },
             )
             1 -> DiagnosticsScreen(
                 modifier = Modifier

@@ -1,4 +1,9 @@
+<p align="center">
+  <img src="docs/talonlogo.png" alt="TALON logo" width="220"/>
+</p>
+
 # 🦅 TALON
+
 
 **TALON** is a minimal, Android-first vehicle telemetry app focused on reliable, fuel-centric data collection using a Bluetooth OBD-II adapter.
 

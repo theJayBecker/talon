@@ -53,7 +53,7 @@ fun DashboardScreen(
     lastDeviceName: String? = null,
     onReconnectClick: () -> Unit = {},
     onConnectClick: () -> Unit,
-    onDisconnectClick: () -> Unit,
+    onStopTripClick: () -> Unit = {},
 ) {
     val connected = connectionState is ConnectionState.Connected
     val staleLabel = if (isStale) " (Stale)" else ""
@@ -89,16 +89,17 @@ fun DashboardScreen(
             MetricGrid(
                 liveValues = liveValues,
                 staleLabel = staleLabel,
+                gallonsBurnedSinceConnect = gallonsBurnedSinceConnect,
             )
             DistanceCard(
-                speedMph = liveValues.speedMph,
+                gallonsBurnedSinceConnect = gallonsBurnedSinceConnect,
                 sessionDistanceMiles = sessionDistanceMiles,
                 tripDistanceMiles = tripDistanceMiles,
             )
             StatusStrip(
                 connectionState = connectionState,
                 isStale = isStale,
-                onDisconnectClick = onDisconnectClick,
+                onStopTripClick = onStopTripClick,
             )
         }
     }
@@ -227,8 +228,11 @@ private fun ConnectView(
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        TextButton(onClick = onConnectClick) {
-                            Text("Choose another device", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(
+                            onClick = onConnectClick,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Connect to different device")
                         }
                     } else {
                         Button(
@@ -324,13 +328,15 @@ private fun FuelCard(
 private fun MetricGrid(
     liveValues: LivePidValues,
     staleLabel: String,
+    gallonsBurnedSinceConnect: Double = 0.0,
 ) {
     fun valueStr(value: Any?, suffix: String): String = if (value != null) "$value$suffix$staleLabel" else "—"
     val cardShape = RoundedCornerShape(12.dp)
     val borderColor = MaterialTheme.colorScheme.outline
+    val fuelBurnedStr = String.format(Locale.US, "%.3f", gallonsBurnedSinceConnect)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard("Speed", valueStr(liveValues.speedMph?.toInt(), " mph"), "mph", cardShape, borderColor)
+            MetricCard("Fuel burned", "${fuelBurnedStr}${staleLabel}", "gal", cardShape, borderColor)
             MetricCard("RPM", valueStr(liveValues.rpm, ""), "rpm", cardShape, borderColor)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -381,7 +387,7 @@ private fun MetricCard(
 
 @Composable
 private fun DistanceCard(
-    speedMph: Float?,
+    gallonsBurnedSinceConnect: Double,
     sessionDistanceMiles: Double,
     tripDistanceMiles: Double?,
 ) {
@@ -400,12 +406,12 @@ private fun DistanceCard(
         ) {
             Column {
                 Text(
-                    text = "SPEED",
+                    text = "FUEL BURNED",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = speedMph?.let { String.format(Locale.US, "%.1f mph", it) } ?: "— mph",
+                    text = String.format(Locale.US, "%.3f gal", gallonsBurnedSinceConnect),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = 4.dp),
@@ -432,7 +438,7 @@ private fun DistanceCard(
 private fun StatusStrip(
     connectionState: ConnectionState,
     isStale: Boolean,
-    onDisconnectClick: () -> Unit,
+    onStopTripClick: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -470,7 +476,7 @@ private fun StatusStrip(
                 }
             }
             if (connectionState is ConnectionState.Connected) {
-                OutlinedButton(onClick = onDisconnectClick) { Text("Disconnect") }
+                OutlinedButton(onClick = onStopTripClick) { Text("Stop trip") }
             }
         }
     }
