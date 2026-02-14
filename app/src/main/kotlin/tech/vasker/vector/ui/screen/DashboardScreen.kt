@@ -48,8 +48,8 @@ fun DashboardScreen(
     isStale: Boolean,
     errorMessage: String?,
     gallonsBurnedSinceConnect: Double = 0.0,
-    sessionDistanceMiles: Double = 0.0,
-    tripDistanceMiles: Double? = null,
+    tripDistanceMiles: Double = 0.0,
+    gph: Double? = null,
     lastDeviceName: String? = null,
     onReconnectClick: () -> Unit = {},
     onConnectClick: () -> Unit,
@@ -84,23 +84,15 @@ fun DashboardScreen(
                 fuelPercent = liveValues.fuelPercent,
                 fuelPercentQuality = liveValues.fuelPercentQuality,
                 staleLabel = staleLabel,
-                gallonsBurnedSinceConnect = gallonsBurnedSinceConnect,
+                gph = gph,
             )
             MetricGrid(
                 liveValues = liveValues,
                 staleLabel = staleLabel,
                 gallonsBurnedSinceConnect = gallonsBurnedSinceConnect,
-            )
-            DistanceCard(
-                gallonsBurnedSinceConnect = gallonsBurnedSinceConnect,
-                sessionDistanceMiles = sessionDistanceMiles,
                 tripDistanceMiles = tripDistanceMiles,
             )
-            StatusStrip(
-                connectionState = connectionState,
-                isStale = isStale,
-                onStopTripClick = onStopTripClick,
-            )
+            StatusStrip(onStopTripClick = onStopTripClick)
         }
     }
 }
@@ -187,11 +179,7 @@ private fun ConnectView(
                     }
                     Spacer(modifier = Modifier.size(12.dp))
                     Column {
-                        Text(
-                            text = "Connection Status",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+             
                         Text(
                             text = statusText,
                             style = MaterialTheme.typography.titleMedium,
@@ -276,7 +264,7 @@ private fun FuelCard(
     fuelPercent: Float?,
     fuelPercentQuality: FuelPercentQuality?,
     staleLabel: String,
-    gallonsBurnedSinceConnect: Double = 0.0,
+    gph: Double? = null,
 ) {
     val qualityLabel = when (fuelPercentQuality) {
         FuelPercentQuality.Stabilizing -> "Stabilizing…"
@@ -316,7 +304,7 @@ private fun FuelCard(
             CircularFuelGauge(fuelPercent = fuelPercent, size = 180.dp, strokeWidth = 14.dp)
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = String.format(Locale.US, "%.3f gal since connect", gallonsBurnedSinceConnect),
+                text = if (gph != null) String.format(Locale.US, "%.3f gal/h", gph) else "—",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -329,18 +317,20 @@ private fun MetricGrid(
     liveValues: LivePidValues,
     staleLabel: String,
     gallonsBurnedSinceConnect: Double = 0.0,
+    tripDistanceMiles: Double = 0.0,
 ) {
     fun valueStr(value: Any?, suffix: String): String = if (value != null) "$value$suffix$staleLabel" else "—"
     val cardShape = RoundedCornerShape(12.dp)
     val borderColor = MaterialTheme.colorScheme.outline
     val fuelBurnedStr = String.format(Locale.US, "%.3f", gallonsBurnedSinceConnect)
+    val distanceStr = String.format(Locale.US, "%.3f", tripDistanceMiles) + staleLabel
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("Fuel burned", "${fuelBurnedStr}${staleLabel}", "gal", cardShape, borderColor)
-            MetricCard("RPM", valueStr(liveValues.rpm, ""), "rpm", cardShape, borderColor)
+            MetricCard("Distance", distanceStr, "mi", cardShape, borderColor)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard("Coolant Temp", valueStr(liveValues.coolantF, ""), "°F", cardShape, borderColor)
+            MetricCard("IAT", valueStr(liveValues.intakeAirTempF, ""), "°F", cardShape, borderColor)
             MetricCard("Intake pressure", valueStr(liveValues.mapKpa, ""), "kPa", cardShape, borderColor)
         }
     }
@@ -386,58 +376,7 @@ private fun MetricCard(
 }
 
 @Composable
-private fun DistanceCard(
-    gallonsBurnedSinceConnect: Double,
-    sessionDistanceMiles: Double,
-    tripDistanceMiles: Double?,
-) {
-    val distanceLabel = if (tripDistanceMiles != null) "Trip distance" else "Session distance"
-    val distanceMi = tripDistanceMiles ?: sessionDistanceMiles
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
-                Text(
-                    text = "FUEL BURNED",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = String.format(Locale.US, "%.3f gal", gallonsBurnedSinceConnect),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = distanceLabel.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = String.format(Locale.US, "%.3f mi", distanceMi),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun StatusStrip(
-    connectionState: ConnectionState,
-    isStale: Boolean,
     onStopTripClick: () -> Unit,
 ) {
     Card(
@@ -449,35 +388,9 @@ private fun StatusStrip(
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.End,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when (connectionState) {
-                                is ConnectionState.Connected -> MaterialTheme.colorScheme.primary
-                                is ConnectionState.Connecting -> MaterialTheme.colorScheme.secondary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        ),
-                )
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(
-                    text = if (connectionState is ConnectionState.Connected) "Connected" else "Connecting...",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (isStale) {
-                    Spacer(modifier = Modifier.size(8.dp))
-                    Text("(Stale)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                }
-            }
-            if (connectionState is ConnectionState.Connected) {
-                OutlinedButton(onClick = onStopTripClick) { Text("Stop trip") }
-            }
+            OutlinedButton(onClick = onStopTripClick) { Text("Stop trip") }
         }
     }
 }

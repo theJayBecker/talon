@@ -10,22 +10,16 @@ object TripNotificationState {
         private set
 
     @Volatile
-    var burnRateGph: Double? = null
+    var gallonsBurned: Double? = null
         private set
 
-    @Volatile
-    var fuelPercent: Double? = null
-        private set
-
-    fun update(distanceMi: Double, burnRateGph: Double?, fuelPercent: Double?) {
+    fun update(distanceMi: Double, gallonsBurned: Double?) {
         this.distanceMi = distanceMi
-        this.burnRateGph = burnRateGph
-        this.fuelPercent = fuelPercent
+        this.gallonsBurned = gallonsBurned
     }
 
     fun clear() {
         distanceMi = 0.0
-        burnRateGph = null
-        fuelPercent = null
+        gallonsBurned = null
     }
 }

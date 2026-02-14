@@ -38,6 +38,8 @@ object TripJsonParser {
                 maxCoolantF = statsObj.getDouble("maxCoolantF"),
                 maxLoadPct = statsObj.getDouble("maxLoadPct"),
                 idleTimeSec = statsObj.getInt("idleTimeSec"),
+                gpsAccuracyAvgM = statsObj.optDouble("gpsAccuracyAvgM").takeIf { statsObj.has("gpsAccuracyAvgM") && !statsObj.isNull("gpsAccuracyAvgM") },
+                gpsPointsUsed = if (statsObj.has("gpsPointsUsed") && !statsObj.isNull("gpsPointsUsed")) statsObj.getInt("gpsPointsUsed") else null,
             )
             metadata to stats
         } catch (_: Exception) {

@@ -15,6 +15,7 @@ import android.os.Looper
 import androidx.core.app.NotificationCompat
 import tech.vasker.vector.MainActivity
 import tech.vasker.vector.R
+import tech.vasker.vector.TalonApplication
 import java.util.Locale
 
 class RecordingService : Service() {
@@ -26,7 +27,7 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                TripManager.get()?.stopTrip(userInitiated = true)
+                (applicationContext as TalonApplication).tripHolder.stopTrip(userInitiated = true)
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -90,12 +91,10 @@ class RecordingService : Service() {
 
     private fun formatNotificationContent(): String {
         val d = TripNotificationState.distanceMi
-        val gph = TripNotificationState.burnRateGph
-        val fuel = TripNotificationState.fuelPercent
+        val gal = TripNotificationState.gallonsBurned
         val parts = mutableListOf<String>()
         parts.add(String.format(Locale.US, "%.2f mi", d))
-        if (gph != null) parts.add(String.format(Locale.US, "%.3f gal/h", gph))
-        if (fuel != null) parts.add(String.format(Locale.US, "%.0f%% fuel", fuel))
+        if (gal != null) parts.add(String.format(Locale.US, "%.3f gal", gal))
         return parts.ifEmpty { listOf("Recording…") }.joinToString(" • ")
     }
 

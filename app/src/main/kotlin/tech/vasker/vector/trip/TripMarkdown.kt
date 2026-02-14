@@ -24,6 +24,9 @@ fun generateTripMarkdown(
     sb.appendLine("duration_sec: ${stats.durationSec}")
     sb.appendLine("distance_mi: ${formatDistanceMi(stats.distanceMi)}")
     sb.appendLine("distance_miles: ${formatDistanceMi(stats.distanceMi)}")
+    sb.appendLine("distance_source: gps")
+    stats.gpsAccuracyAvgM?.let { sb.appendLine("gps_accuracy_avg_m: ${formatDouble(it)}") }
+    stats.gpsPointsUsed?.let { sb.appendLine("gps_points_used: $it") }
     sb.appendLine("fuel_start_pct: ${formatNullable(stats.fuelStartPct)}")
     sb.appendLine("fuel_end_pct: ${formatNullable(stats.fuelEndPct)}")
     sb.appendLine("fuel_used_pct: ${formatNullable(stats.fuelUsedPct)}")

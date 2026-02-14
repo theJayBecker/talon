@@ -26,6 +26,8 @@ data class TripStats(
     val maxCoolantF: Double,
     val maxLoadPct: Double,
     val idleTimeSec: Int,
+    val gpsAccuracyAvgM: Double? = null,
+    val gpsPointsUsed: Int? = null,
 )
 
 data class TripSample(

@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,8 +15,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import tech.vasker.vector.gps.GpsDistanceTracker
+import tech.vasker.vector.gps.GpsTrackerState
+import tech.vasker.vector.gps.metersToMiles
 import tech.vasker.vector.obd.ConnectionState
-import tech.vasker.vector.obd.DistanceAccumulator
 import tech.vasker.vector.obd.LivePidValues
 import tech.vasker.vector.obd.ObdCapabilities
 import java.util.UUID
@@ -73,17 +74,15 @@ class TripStateHolder(
 
     private var lastSampleTimeMs: Long = 0L
     private var monitoringJob: Job? = null
-    private val tripDistanceAccumulator = DistanceAccumulator()
+    private val gpsTracker = GpsDistanceTracker(context)
+
+    val gpsTrackerState: StateFlow<GpsTrackerState> = gpsTracker.state
 
     /** When stopTrip(userInitiated=true) is called without gallons, this provider is used (e.g. from notification). Set from app. */
     var gallonsProvider: (() -> Double?)? = null
 
-    /** Call from ObdStateHolder when speed (010D) is parsed; integrates into trip distance when recording. */
-    fun onSpeedSample(speedKmh: Double, timestampMs: Long) {
-        if (_tripState.value.state == TripState.ACTIVE) {
-            tripDistanceAccumulator.update(speedKmh, timestampMs)
-        }
-    }
+    /** Invoked after trip is successfully saved (e.g. to reset OBD session stats). */
+    var onTripSaved: (() -> Unit)? = null
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -125,9 +124,26 @@ class TripStateHolder(
                 // Stop on disconnect is handled via ObdStateHolder.onDisconnecting so gallons are captured before reset
             }
         }
+        scope.launch {
+            while (true) {
+                delay(2000)
+                if (_tripState.value.state == TripState.ACTIVE) {
+                    TripNotificationState.update(_tripState.value.distanceMi, gallonsProvider?.invoke())
+                } else {
+                    TripNotificationState.clear()
+                }
+            }
+        }
     }
 
     fun startTrip(isAutoStart: Boolean = false) {
+        scope.launch(Dispatchers.Main.immediate) {
+            startTripOnMain(isAutoStart)
+        }
+    }
+
+    /** Runs on Main so LocationManager.requestLocationUpdates (which uses a Handler) has a Looper. */
+    private fun startTripOnMain(isAutoStart: Boolean) {
         if (_tripState.value.state == TripState.ACTIVE) return
         stopMonitoring()
         val tripId = UUID.randomUUID().toString()
@@ -135,7 +151,8 @@ class TripStateHolder(
         val fuelStart = lastLiveValues.fuelPercent?.toDouble()
         val mode = if (isAutoStart) RecordingMode.AUTO else RecordingMode.MANUAL
         storage.startTrip(tripId, startTime, fuelStart)
-        tripDistanceAccumulator.reset()
+        gpsTracker.resetDistance()
+        gpsTracker.start()
         session = TripSession(tripId, startTime, fuelStart, recordingMode = mode, fuelMethod = "NONE")
         lossStartMs = null
         _tripState.value = TripRecordingState(
@@ -157,15 +174,10 @@ class TripStateHolder(
 
     fun stopTrip(userInitiated: Boolean, gallonsBurnedSinceConnect: Double? = null) {
         val gallonsToApply = gallonsBurnedSinceConnect ?: (if (userInitiated) gallonsProvider?.invoke() else null)
-        // Use GlobalScope so this save always runs to completion even if the UI scope is cancelled (e.g. on disconnect).
-        GlobalScope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO) {
             if (gallonsToApply != null) {
                 session?.gallonsBurnedTrip = gallonsToApply
             }
-            // Use max of accumulator and session value so we never save less than what the sampling loop last wrote (avoids race where read happens before final update).
-            val accMi = tripDistanceAccumulator.totalDistanceMiles
-            val sessionMi = session?.distanceMi ?: 0.0
-            session?.distanceMi = maxOf(accMi, sessionMi)
             stopTripInternal(
                 endReason = if (userInitiated) null else "disconnect",
                 forcedStatus = if (userInitiated) null else TripStatus.PARTIAL,
@@ -306,7 +318,7 @@ class TripStateHolder(
                 )
                 storage.appendSample(currentSession.tripId, sample)
                 currentSession.updateWithSample(sample)
-                currentSession.distanceMi = tripDistanceAccumulator.totalDistanceMiles
+                currentSession.distanceMi = metersToMiles(gpsTracker.totalDistanceMeters.value)
                 _tripState.value = _tripState.value.copy(
                     durationSec = currentSession.durationSec(),
                     distanceMi = currentSession.distanceMi,
@@ -355,6 +367,7 @@ class TripStateHolder(
         _tripState.value = _tripState.value.copy(state = TripState.ENDING)
         samplingJob?.cancel()
         samplingJob = null
+        gpsTracker.stop()
         stopLocationUpdates()
         val endTime = System.currentTimeMillis()
         val gpsAvailable = isGpsAvailable(endTime)
@@ -369,9 +382,23 @@ class TripStateHolder(
             recordingMode = current.recordingMode,
             endReason = endReason,
         )
-        val stats = current.buildStats(endTime)
-        storage.finalizeTrip(current.tripId, metadata, stats, includeSamples = false)
-        repository.insertTrip(metadata, stats, "trips/${current.tripId}/samples.csv")
+        val stats = current.buildStats(endTime).copy(
+            gpsAccuracyAvgM = gpsTracker.accuracyAvgM(),
+            gpsPointsUsed = gpsTracker.pointsUsedCount(),
+        )
+
+        val isEmpty =
+            stats.distanceMi < MIN_DISTANCE_MI_RECORD ||
+            stats.fuelBurnedGal == null ||
+            stats.fuelBurnedGal < MIN_FUEL_GAL_RECORD
+
+        if (isEmpty) {
+            storage.deleteTrip(current.tripId)
+        } else {
+            storage.finalizeTrip(current.tripId, metadata, stats, includeSamples = false)
+            repository.insertTrip(metadata, stats, "trips/${current.tripId}/samples.csv")
+        }
+
         session = null
         RecordingService.stop(context)
         _tripState.value = _tripState.value.copy(
@@ -379,6 +406,8 @@ class TripStateHolder(
             status = status,
         )
         _tripState.value = TripRecordingState()
+        gpsTracker.resetDistance()
+        onTripSaved?.invoke()
     }
 
     private data class TripSession(
@@ -404,7 +433,6 @@ class TripStateHolder(
     ) {
         fun updateWithSample(sample: TripSample) {
             sample.speedMph?.let { speed ->
-                distanceMi += speed / 3600.0
                 sumSpeed += speed
                 countSpeed += 1
                 if (speed > maxSpeed) maxSpeed = speed

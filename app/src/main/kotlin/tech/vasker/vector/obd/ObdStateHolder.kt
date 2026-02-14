@@ -59,13 +59,6 @@ class ObdStateHolder(
     private val _fuelBurnSession = MutableStateFlow(FuelBurnSession())
     val fuelBurnSession: StateFlow<FuelBurnSession> = _fuelBurnSession.asStateFlow()
 
-    private val sessionDistanceAccumulator = DistanceAccumulator()
-    private val _sessionDistanceMiles = MutableStateFlow(0.0)
-    val sessionDistanceMiles: StateFlow<Double> = _sessionDistanceMiles.asStateFlow()
-
-    /** Invoked when speed (010D) is parsed: (speedKmh, timestampMs). Trip layer can integrate for trip distance. */
-    var onSpeedSample: ((Double, Long) -> Unit)? = null
-
     val obdLogLines: StateFlow<List<ObdLogLine>> = obdLogBuffer.lines
 
     fun clearObdLog() = obdLogBuffer.clear()
@@ -171,9 +164,13 @@ class ObdStateHolder(
         _capabilities.value = ObdCapabilities()
         _fuelBurnSession.value = FuelBurnSession()
         lastFuelUpdateElapsedMs = 0L
-        sessionDistanceAccumulator.reset()
-        _sessionDistanceMiles.value = 0.0
         disconnectInternal()
+    }
+
+    /** Reset session fuel/distance stats without disconnecting. Call after trip is saved so next trip starts at 0. */
+    fun resetSessionStats() {
+        _fuelBurnSession.value = FuelBurnSession()
+        lastFuelUpdateElapsedMs = 0L
     }
 
     /** Capability probe: run full command list via queue; polling paused during probe. No overlapping probes. */
@@ -340,16 +337,7 @@ class ObdStateHolder(
     private suspend fun runTier1(c: ElmClient) {
         var cur = _liveValues.value
         if (_connectionState.value != ConnectionState.Connected) return
-        val now = SystemClock.elapsedRealtime()
-        val speedMphFromObd = Parse.parseSpeed(c.sendObdCommand(ObdCommands.PID_SPEED))
-        val speedMphToUse = speedMphFromObd ?: cur.speedMph
-        if (speedMphFromObd != null) cur = cur.copy(speedMph = speedMphFromObd)
-        if (speedMphToUse != null) {
-            val speedKmh = speedMphToUse.toDouble() / 0.621371
-            sessionDistanceAccumulator.update(speedKmh, now)
-            onSpeedSample?.invoke(speedKmh, now)
-        }
-        _sessionDistanceMiles.value = sessionDistanceAccumulator.totalDistanceMiles
+        Parse.parseSpeed(c.sendObdCommand(ObdCommands.PID_SPEED))?.let { cur = cur.copy(speedMph = it) }
         kotlinx.coroutines.delay(POLL_DELAY_MS)
         if (_connectionState.value != ConnectionState.Connected) return
         Parse.parseRpm(c.sendObdCommand(ObdCommands.PID_RPM))?.let { cur = cur.copy(rpm = it) }

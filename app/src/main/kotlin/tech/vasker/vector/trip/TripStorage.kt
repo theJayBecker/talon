@@ -213,6 +213,8 @@ class TripStorage(
         statsObj.put("maxCoolantF", stats.maxCoolantF)
         statsObj.put("maxLoadPct", stats.maxLoadPct)
         statsObj.put("idleTimeSec", stats.idleTimeSec)
+        stats.gpsAccuracyAvgM?.let { statsObj.put("gpsAccuracyAvgM", it) }
+        stats.gpsPointsUsed?.let { statsObj.put("gpsPointsUsed", it) }
         obj.put("stats", statsObj)
 
         file.writeText(obj.toString(2), Charsets.UTF_8)
@@ -281,7 +283,6 @@ class TripStorage(
                 countSpeed += 1
                 sumSpeed += speed
                 if (speed > maxSpeed) maxSpeed = speed
-                distanceMi += speed / 3600.0
                 if (speed <= 1.0) idleTimeSec += 1
             }
             if (rpm != null) {

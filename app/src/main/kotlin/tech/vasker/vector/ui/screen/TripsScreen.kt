@@ -9,13 +9,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,14 +30,40 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
+import com.patrykandpatrick.vico.compose.cartesian.layer.*
+import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
+import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModelProducer
+import com.patrykandpatrick.vico.core.cartesian.data.lineSeries
+import tech.vasker.vector.trip.averageMpg
+import tech.vasker.vector.trip.fuelSeriesForChart
+import tech.vasker.vector.trip.milesSeriesForChart
+import tech.vasker.vector.trip.mpgSeriesForChart
+import tech.vasker.vector.trip.totalFuelBurnedGal
+import tech.vasker.vector.trip.totalMiles
+import tech.vasker.vector.trip.tripEndDatesForAxis
+import tech.vasker.vector.trip.tripsInLast30Days
 import tech.vasker.vector.trip.TripSummary
+import com.patrykandpatrick.vico.compose.common.fill
+import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
+import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,6 +79,11 @@ fun TripsScreen(
 ) {
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var graphExpanded by remember { mutableStateOf(true) }
+    var selectedChartTab by remember { mutableStateOf(0) } // 0 = MPG, 1 = Fuel, 2 = Miles
+
+    val chartTrips = remember(trips) { tripsInLast30Days(trips) }
+    val hasChartData = chartTrips.isNotEmpty()
 
     Column(modifier = modifier.fillMaxSize()) {
         if (isSelectionMode) {
@@ -95,29 +133,133 @@ fun TripsScreen(
                 }
             }
         } else {
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    text = "Trips",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = "${trips.size} trip${if (trips.size == 1) "" else "s"} recorded. Long-press to select.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Trips",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "${trips.size} trip${if (trips.size == 1) "" else "s"} recorded. Long-press to select.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                if (hasChartData) {
+                    IconButton(
+                        onClick = { graphExpanded = !graphExpanded },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (graphExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            contentDescription = if (graphExpanded) "Collapse graph" else "Expand graph",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
+
+        if (hasChartData && graphExpanded) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .pointerInput(Unit) {
+                            var totalDrag = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { totalDrag = 0f },
+                                onHorizontalDrag = { _, dragAmount -> totalDrag += dragAmount },
+                                onDragEnd = {
+                                    val threshold = 80f
+                                    when {
+                                        totalDrag < -threshold -> selectedChartTab = (selectedChartTab + 1).coerceIn(0, 2)
+                                        totalDrag > threshold -> selectedChartTab = (selectedChartTab - 1).coerceIn(0, 2)
+                                    }
+                                    totalDrag = 0f
+                                },
+                            )
+                        },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = when (selectedChartTab) {
+                                0 -> averageMpg(chartTrips)?.let { String.format(Locale.getDefault(), "%.1f MPG", it) } ?: "— MPG"
+                                1 -> String.format(Locale.getDefault(), "%.2f gal", totalFuelBurnedGal(chartTrips))
+                                else -> String.format(Locale.getDefault(), "%.1f mi", totalMiles(chartTrips))
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TextButton(
+                                onClick = { selectedChartTab = 0 },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "MPG",
+                                    color = if (selectedChartTab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(
+                                onClick = { selectedChartTab = 1 },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "Fuel",
+                                    color = if (selectedChartTab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(
+                                onClick = { selectedChartTab = 2 },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "Miles",
+                                    color = if (selectedChartTab == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    MonthChart(
+                        chartTrips = chartTrips,
+                        chartTab = selectedChartTab,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                    )
+                }
+            }
+        }
+
         if (trips.isEmpty()) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(1f)
+                    .fillMaxWidth()
                     .padding(24.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -135,8 +277,11 @@ fun TripsScreen(
                 )
             }
         } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                trips.forEach { trip ->
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                items(trips, key = { it.id }) { trip ->
                     TripRow(
                         trip = trip,
                         isSelectionMode = isSelectionMode,
@@ -158,6 +303,91 @@ fun TripsScreen(
             }
         }
     }
+}
+
+private val axisDateFormat = SimpleDateFormat("M/d", Locale.getDefault())
+
+@Composable
+private fun MonthChart(
+    chartTrips: List<TripSummary>,
+    chartTab: Int, // 0 = MPG, 1 = Fuel, 2 = Miles
+    modifier: Modifier = Modifier,
+) {
+    val (xList, yList) = when (chartTab) {
+        0 -> mpgSeriesForChart(chartTrips)
+        1 -> fuelSeriesForChart(chartTrips)
+        else -> milesSeriesForChart(chartTrips)
+    }
+    val endDates = remember(chartTrips) { tripEndDatesForAxis(chartTrips) }
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    val yAxisFormatter = remember(chartTab) {
+        CartesianValueFormatter { _, value, _ ->
+            val v = value.toFloat()
+            when (chartTab) {
+                0 -> String.format(Locale.getDefault(), "%.1f", v)
+                1 -> String.format(Locale.getDefault(), "%.2f gal", v)
+                else -> String.format(Locale.getDefault(), "%.1f mi", v)
+            }
+        }
+    }
+    val xAxisFormatter = remember(endDates) {
+        CartesianValueFormatter { _, value, _ ->
+            val idx = value.toInt().coerceIn(0, endDates.size - 1)
+            if (endDates.isEmpty()) "" else axisDateFormat.format(Date(endDates[idx]))
+        }
+    }
+
+    val lineLayer = rememberLineCartesianLayer(
+        lineProvider = LineCartesianLayer.LineProvider.series(
+            listOf(
+                LineCartesianLayer.rememberLine(
+                    fill = LineCartesianLayer.LineFill.single(fill(primaryColor)),
+                    pointProvider = LineCartesianLayer.PointProvider.single(
+                        LineCartesianLayer.point(
+                            component = rememberShapeComponent(
+                                fill = fill(primaryColor),
+                                shape = com.patrykandpatrick.vico.core.common.shape.CorneredShape.Pill,
+                            ),
+                            size = 8.dp,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    val yAxisTitle = when (chartTab) {
+        0 -> "MPG"
+        1 -> "Gal"
+        else -> "Mi"
+    }
+    val chart = rememberCartesianChart(
+        lineLayer,
+        startAxis = VerticalAxis.rememberStart(
+            valueFormatter = yAxisFormatter,
+            title = yAxisTitle,
+        ),
+        bottomAxis = HorizontalAxis.rememberBottom(
+            valueFormatter = xAxisFormatter,
+            title = "Date",
+        ),
+    )
+    val modelProducer = remember { CartesianChartModelProducer() }
+
+    LaunchedEffect(chartTrips, chartTab) {
+        if (xList.isEmpty()) return@LaunchedEffect
+        modelProducer.runTransaction {
+            lineSeries {
+                series(x = xList, y = yList)
+            }
+        }
+    }
+
+    CartesianChartHost(
+        chart = chart,
+        modelProducer = modelProducer,
+        modifier = modifier.clip(RoundedCornerShape(8.dp)),
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

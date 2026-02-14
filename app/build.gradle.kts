@@ -56,4 +56,7 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation(libs.vico.compose)
+    implementation(libs.vico.core)
 }

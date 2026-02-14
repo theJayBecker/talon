@@ -44,36 +44,32 @@ import tech.vasker.vector.ui.screen.DiagnosticsScreen
 import tech.vasker.vector.ui.screen.TripDetailScreen
 import tech.vasker.vector.ui.screen.TripsScreen
 import tech.vasker.vector.trip.TripDetail
-import tech.vasker.vector.trip.TripNotificationState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import androidx.compose.foundation.background
 import androidx.compose.material3.ExperimentalMaterial3Api
-import tech.vasker.vector.trip.TripManager
+import tech.vasker.vector.TalonApplication
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TalonApp() {
     var selectedTabIndex by remember { mutableStateOf(0) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val obdHolder = remember { ObdStateHolder(scope, context) }
+    val app = context.applicationContext as TalonApplication
+    val obdHolder = remember(app) { app.obdHolder }
+    val tripHolder = remember(app) { app.tripHolder }
 
     val connectionState by obdHolder.connectionState.collectAsState()
     val liveValues by obdHolder.liveValues.collectAsState()
     val diagnosticsData by obdHolder.diagnosticsData.collectAsState()
     val fuelBurnSession by obdHolder.fuelBurnSession.collectAsState()
-    val sessionDistanceMiles by obdHolder.sessionDistanceMiles.collectAsState()
     val obdLogLines by obdHolder.obdLogLines.collectAsState()
-    val tripHolder = remember { TripManager.init(scope, context, obdHolder.liveValues, obdHolder.connectionState, obdHolder.capabilities) }
     val tripState by tripHolder.tripState.collectAsState()
     val tripSummaries by tripHolder.tripSummaries.collectAsState()
 
@@ -89,37 +85,6 @@ fun TalonApp() {
 
     LaunchedEffect(Unit) {
         obdHolder.tryAutoConnect()
-    }
-    LaunchedEffect(obdHolder, tripHolder) {
-        tripHolder.gallonsProvider = { obdHolder.fuelBurnSession.value.gallonsBurned }
-        obdHolder.onDisconnecting = { gallonsBurned ->
-            tripHolder.stopTrip(userInitiated = false, gallonsBurnedSinceConnect = gallonsBurned)
-        }
-        obdHolder.onSpeedSample = { speedKmh, timestampMs ->
-            tripHolder.onSpeedSample(speedKmh, timestampMs)
-        }
-    }
-
-    // Push live trip stats to foreground notification (burn rate, distance, fuel %) every 2s while trip is active
-    LaunchedEffect(obdHolder, tripHolder) {
-        while (true) {
-            delay(2000)
-            val state = tripHolder.tripState.value
-            val conn = obdHolder.connectionState.value
-            if (state.state != TripState.ACTIVE || conn !is ConnectionState.Connected) {
-                TripNotificationState.clear()
-                continue
-            }
-            val gallons = obdHolder.fuelBurnSession.value.gallonsBurned
-            val connectMs = obdHolder.getConnectElapsedMs()
-            val elapsedH = if (connectMs != null) (SystemClock.elapsedRealtime() - connectMs) / 3600000.0 else 0.0
-            val gph = if (elapsedH > 0) gallons / elapsedH else null
-            TripNotificationState.update(
-                state.distanceMi,
-                gph,
-                obdHolder.liveValues.value.fuelPercent?.toDouble(),
-            )
-        }
     }
 
     var showConnectSheet by remember { mutableStateOf(false) }
@@ -244,27 +209,32 @@ fun TalonApp() {
         },
     ) { paddingValues ->
         when (selectedTabIndex) {
-            0 -> DashboardScreen(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                connectionState = connectionState,
-                liveValues = liveValues,
-                isStale = isStale,
-                errorMessage = errorMessage,
-                gallonsBurnedSinceConnect = fuelBurnSession.gallonsBurned,
-                sessionDistanceMiles = sessionDistanceMiles,
-                tripDistanceMiles = if (tripState.state == TripState.ACTIVE) tripState.distanceMi else null,
-                lastDeviceName = obdHolder.getLastDeviceName(),
-                onReconnectClick = { obdHolder.tryAutoConnect() },
-                onConnectClick = { openConnectSheet() },
-                onStopTripClick = {
-                    tripHolder.stopTrip(
-                        userInitiated = true,
-                        gallonsBurnedSinceConnect = obdHolder.fuelBurnSession.value.gallonsBurned,
-                    )
-                },
-            )
+            0 -> {
+                val connectMs = obdHolder.getConnectElapsedMs()
+                val elapsedH = if (connectMs != null) (SystemClock.elapsedRealtime() - connectMs) / 3600000.0 else 0.0
+                val gph = if (elapsedH > 0) fuelBurnSession.gallonsBurned / elapsedH else null
+                DashboardScreen(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    connectionState = connectionState,
+                    liveValues = liveValues,
+                    isStale = isStale,
+                    errorMessage = errorMessage,
+                    gallonsBurnedSinceConnect = fuelBurnSession.gallonsBurned,
+                    tripDistanceMiles = if (tripState.state == TripState.ACTIVE) tripState.distanceMi else 0.0,
+                    gph = gph,
+                    lastDeviceName = obdHolder.getLastDeviceName(),
+                    onReconnectClick = { obdHolder.tryAutoConnect() },
+                    onConnectClick = { openConnectSheet() },
+                    onStopTripClick = {
+                        tripHolder.stopTrip(
+                            userInitiated = true,
+                            gallonsBurnedSinceConnect = obdHolder.fuelBurnSession.value.gallonsBurned,
+                        )
+                    },
+                )
+            }
             1 -> DiagnosticsScreen(
                 modifier = Modifier
                     .fillMaxSize()
